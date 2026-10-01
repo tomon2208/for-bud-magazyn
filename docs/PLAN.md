@@ -189,6 +189,8 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 **Etap 3 — lokalizacje i kody**: CRUD lokalizacji, `by-code`, strona wydruku etykiet QR (prosta), ekran SKANUJ (kamera + ręczne wpisanie kodu).
 
 **Etap 4 — rdzeń stocku + przyjęcia**: `stock`, `stock_operations`, `stock_movements`, triggery niemutowalności, `stock_receipt`, idempotencja; mobilny flow skan → materiał → ilość → zatwierdź; test równoległych przyjęć.
+- **Przed startem:** osobny projekt Supabase `forbud-prod` (produkcja nie może dzielić bazy z testami).
+- **Blokady kartoteki (z review Etapu 2):** zakaz zmiany `unit` materiału, gdy istnieją ruchy (`UNIT_LOCKED`); zakaz dezaktywacji materiału ze stanem ≠ 0 (`HAS_STOCK`, w Etapie 11 także z aktywnymi rezerwacjami); ruchy zawsze po `material_id`, nigdy po kodzie; zmiana kodu po imporcie LiczOkno — do decyzji w Etapie 12.
 
 **Etap 5 — wydania i przesunięcia**: `stock_issue` (zlecenie lub powód), `stock_transfer`; test: dwa równoczesne wydania nie zejdą poniżej zera.
 

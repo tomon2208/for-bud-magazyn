@@ -40,3 +40,23 @@ export async function parseJsonBody<T>(
   }
   return { ok: true, data: parsed.data };
 }
+
+/** Walidacja parametrów query string (GET). Zwraca dane albo gotową odpowiedź 400. */
+export function parseQuery<T>(
+  url: string,
+  schema: ZodType<T>,
+): { ok: true; data: T } | { ok: false; response: NextResponse } {
+  const raw: Record<string, string> = {};
+  for (const [key, value] of new URL(url).searchParams) raw[key] ??= value;
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    const fields: Record<string, string[]> = {};
+    for (const issue of parsed.error.issues) {
+      const key = issue.path.length > 0 ? issue.path.join(".") : "_";
+      (fields[key] ??= []).push(issue.message);
+    }
+    const first = parsed.error.issues[0]?.message ?? "Nieprawidłowe parametry";
+    return { ok: false, response: jsonError(400, "VALIDATION", first, fields) };
+  }
+  return { ok: true, data: parsed.data };
+}

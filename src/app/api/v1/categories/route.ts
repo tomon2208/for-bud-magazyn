@@ -1,0 +1,30 @@
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createCategorySchema, listCategoriesQuerySchema } from "@/lib/validation/catalog";
+import { requireApiRole } from "@/server/auth";
+import { createCategory, listCategories } from "@/server/catalog";
+import { jsonError, jsonOk } from "@/server/http";
+import { parseJsonBody, parseQuery } from "@/server/request";
+
+export async function GET(request: Request) {
+  const auth = await requireApiRole();
+  if (!auth.ok) return auth.response;
+
+  const query = parseQuery(request.url, listCategoriesQuerySchema);
+  if (!query.ok) return query.response;
+
+  const result = await listCategories(await createSupabaseServerClient(), query.data);
+  if (!result.ok) return jsonError(result.error.status, result.error.code, result.error.message);
+  return jsonOk(result.data);
+}
+
+export async function POST(request: Request) {
+  const auth = await requireApiRole("ADMIN");
+  if (!auth.ok) return auth.response;
+
+  const body = await parseJsonBody(request, createCategorySchema);
+  if (!body.ok) return body.response;
+
+  const result = await createCategory(await createSupabaseServerClient(), body.data);
+  if (!result.ok) return jsonError(result.error.status, result.error.code, result.error.message);
+  return jsonOk(result.data, 201);
+}

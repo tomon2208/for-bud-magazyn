@@ -24,3 +24,8 @@ System magazynowy FOR-BUD. Plan: [docs/PLAN.md](docs/PLAN.md). Zasady projektu: 
 Konfiguracja: skopiuj `.env.example` do `.env.local` (klucze Supabase dla aplikacji) oraz `.env.scripts.example` do `.env.scripts` (hasło do bazy i konto admina — tylko dla skryptów; ten plik nie trafia do bundla Workera).
 
 Deploy na produkcję: procedura w [ADR 006](docs/decisions/006-auth-roles.md#sekrety-i-deploy).
+
+### Cloudflare — gdzie ustawić zmienne
+
+- `SUPABASE_SECRET_KEY` ustaw w Cloudflare: **Worker → Settings → Variables and Secrets** jako typ **Secret** (runtime Workera). **Nie** w sekcji *Build* — tam trafiają tylko `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` i `NODE_VERSION`.
+- Klucz secret jest używany tylko przez panel użytkowników (`/api/v1/admin/users`); kartoteki (materiały, dostawcy, kategorie) działają na kluczu publishable + sesji użytkownika (RLS).

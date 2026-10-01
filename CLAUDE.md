@@ -22,6 +22,8 @@ Docelowo:
 
 Nie dodawaj nowych bibliotek bez uzasadnienia.
 
+Dokumentacja Next.js zgodna z zainstalowaną wersją: `node_modules/next/dist/docs/` — czytaj ją przed pisaniem kodu Next.js (wiedza z treningu może być nieaktualna).
+
 ## Role
 
 - ADMIN — pełny dostęp, w tym ręczne korekty stanów
