@@ -226,6 +226,7 @@ Poza MVP: automatyczne zamówienia, PDF/PZ/WZ, resztki profili, integracja onlin
 2. Backup: codzienny `pg_dump` przez GitHub Actions (plan Free nie ma kopii) — uruchomiony i sprawdzone odtworzenie.
 3. **Testy po starcie:** `pnpm test:db` NIE może już działać na bazie produkcyjnej. Przed startem zdecydować: lokalny Supabase (Docker) do testów DB, albo zwolnienie drugiego projektu Supabase na bazę testową.
 4. Rotacja kluczy Supabase (secret) i aktualizacja sekretu w Cloudflare.
+5. Usunięcie funkcji `purge_test_stock` (sprzątanie testów, ADR 009) migracją — na produkcji ruchów nie wolno usuwać żadną ścieżką.
 
 ## Otwarte kwestie na później (nie blokują Etapu 0–3)
 - Czy PRODUKCJA może wydawać bez zlecenia każdy powód, czy z listy zamkniętej (powody jako słownik?) — rozstrzygniemy w Etapie 5.

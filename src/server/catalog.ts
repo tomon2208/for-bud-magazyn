@@ -45,6 +45,16 @@ export function mapDbError(error: DbError, entity: Entity, context: string): Ser
   if (error.code === "P0001" && error.hint === "INACTIVE_SUPPLIER") {
     return { status: 400, code: "INACTIVE_SUPPLIER", message: "Nie można wybrać nieaktywnego dostawcy" };
   }
+  if (error.code === "P0001" && error.hint === "UNIT_LOCKED") {
+    return {
+      status: 409,
+      code: "UNIT_LOCKED",
+      message: "Nie można zmienić jednostki ani ułamkowości — materiał ma już ruchy magazynowe",
+    };
+  }
+  if (error.code === "P0001" && error.hint === "HAS_STOCK") {
+    return { status: 409, code: "HAS_STOCK", message: "Nie można dezaktywować materiału, który jest na stanie" };
+  }
   if (error.code === "23503") {
     const supplier = error.message?.includes("default_supplier_id");
     return {
@@ -53,7 +63,7 @@ export function mapDbError(error: DbError, entity: Entity, context: string): Ser
       message: supplier ? "Wskazany dostawca nie istnieje" : "Wskazana kategoria nie istnieje",
     };
   }
-  if (error.code === "23514" || error.code === "22P02") {
+  if (error.code === "23514" || error.code === "22P02" || error.code === "23502") {
     return { status: 400, code: "VALIDATION", message: "Nieprawidłowe dane" };
   }
   console.error(context, error.code ?? "unknown");
@@ -191,6 +201,7 @@ export type MaterialDto = {
   categoryId: string;
   categoryName: string;
   unit: string;
+  allowsFraction: boolean;
   defaultSupplierId: string | null;
   defaultSupplierName: string | null;
   active: boolean;
@@ -204,6 +215,7 @@ type MaterialRow = {
   name: string;
   category_id: string;
   unit: string;
+  allows_fraction: boolean;
   default_supplier_id: string | null;
   active: boolean;
   notes: string | null;
@@ -213,7 +225,7 @@ type MaterialRow = {
   supplier: { name: string } | null;
 };
 const MATERIAL_COLUMNS =
-  "id, code, name, category_id, unit, default_supplier_id, active, notes, created_at, updated_at, " +
+  "id, code, name, category_id, unit, allows_fraction, default_supplier_id, active, notes, created_at, updated_at, " +
   "category:material_categories(name), supplier:suppliers(name)";
 
 const toMaterial = (r: MaterialRow): MaterialDto => ({
@@ -223,6 +235,7 @@ const toMaterial = (r: MaterialRow): MaterialDto => ({
   categoryId: r.category_id,
   categoryName: r.category?.name ?? "",
   unit: r.unit,
+  allowsFraction: r.allows_fraction,
   defaultSupplierId: r.default_supplier_id,
   defaultSupplierName: r.supplier?.name ?? null,
   active: r.active,

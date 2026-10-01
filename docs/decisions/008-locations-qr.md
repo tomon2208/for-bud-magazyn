@@ -48,3 +48,7 @@ QR zawiera **`L:<kod>`** (np. `L:A-03-02`), na etykiecie drukujemy sam kod. Dwuk
 ## CSP
 
 Obecna CSP to tylko `frame-ancestors 'none'`. Gdyby dodać pełną CSP, skaner wymaga m.in. `worker-src blob:` i `media-src` dla strumienia kamery (komentarz w `src/lib/security-headers.ts`).
+
+## Test w terenie (2026-10-01)
+
+Użytkownik: utworzenie lokalizacji → druk etykiety → skan telefonem w aplikacji (produkcja, workers.dev) → przejście na ekran lokalizacji — działa. iPhone (Safari, fallback skanera bez natywnego BarcodeDetector): etykieta 3×8 wyświetlona na ekranie monitora łapana z „dość daleka” — ocena użytkownika: dobrze. Do potwierdzenia na papierze w hali (oświetlenie, zabrudzenia). Na razie domyślny rozmiar: 3×8.

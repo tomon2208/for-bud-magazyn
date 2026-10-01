@@ -16,6 +16,8 @@ export default async function DesktopLayout({ children }: LayoutProps<"/">) {
         </Link>
         <nav className="flex gap-1 overflow-x-auto md:flex-col" aria-label="Nawigacja główna">
           <NavLink href="/dashboard">Dashboard</NavLink>
+          <NavLink href="/magazyn">Magazyn</NavLink>
+          <NavLink href="/przyjecia">Przyjęcia</NavLink>
           <NavLink href="/materialy">Materiały</NavLink>
           <NavLink href="/dostawcy">Dostawcy</NavLink>
           <NavLink href="/lokalizacje">Lokalizacje</NavLink>

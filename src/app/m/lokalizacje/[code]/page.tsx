@@ -4,6 +4,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requirePageRole } from "@/server/auth";
 import { decodeCodeParam } from "@/lib/validation/locations";
 import { getLocationByCode } from "@/server/locations";
+import { listStock } from "@/server/stock";
+import { formatQuantity } from "@/lib/validation/stock";
 import { BackLink } from "../../back-link";
 
 export const metadata: Metadata = { title: "Lokalizacja — FOR-BUD Magazyn" };
@@ -45,6 +47,11 @@ export default async function MobileLocationPage({ params }: PageProps<"/m/lokal
   }
 
   const location = result.data;
+  const contents = await listStock(await createSupabaseServerClient(), {
+    locationId: location.id,
+    page: 1,
+    pageSize: 500,
+  });
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
       <header className="flex items-center justify-between">
@@ -69,14 +76,43 @@ export default async function MobileLocationPage({ params }: PageProps<"/m/lokal
 
       <section className="rounded-2xl border bg-background p-5">
         <h2 className="mb-2 text-lg font-semibold">Zawartość</h2>
-        <p className="text-muted-foreground">Stany magazynowe pojawią się w kolejnym etapie.</p>
+        {!contents.ok ? (
+          <p role="alert" className="text-destructive">
+            Nie udało się wczytać stanów.
+          </p>
+        ) : contents.data.items.length === 0 ? (
+          <p className="text-muted-foreground">Lokalizacja jest pusta.</p>
+        ) : (
+          <ul className="divide-y">
+            {contents.data.items.map((row) => (
+              <li key={row.materialId} className="flex items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-lg font-bold break-all">{row.materialCode}</div>
+                  <div className="text-sm text-muted-foreground">{row.materialName}</div>
+                </div>
+                <div className="shrink-0 text-right text-xl font-bold whitespace-nowrap">
+                  {formatQuantity(row.quantity)} <span className="text-base font-medium">{row.unit}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <div className="grid grid-cols-2 gap-4">
-        <button type="button" disabled aria-disabled="true" className={`${BIG_BUTTON} bg-background opacity-60`}>
-          PRZYJĘCIE
-          <span className="text-xs font-medium text-muted-foreground">wkrótce</span>
-        </button>
+        {location.active ? (
+          <Link
+            href={`/m/przyjecie?lokalizacja=${encodeURIComponent(location.code)}`}
+            className={`${BIG_BUTTON} bg-primary text-primary-foreground active:opacity-80`}
+          >
+            PRZYJĘCIE
+          </Link>
+        ) : (
+          <button type="button" disabled aria-disabled="true" className={`${BIG_BUTTON} bg-background opacity-60`}>
+            PRZYJĘCIE
+            <span className="text-xs font-medium text-muted-foreground">nieaktywna</span>
+          </button>
+        )}
         <button type="button" disabled aria-disabled="true" className={`${BIG_BUTTON} bg-background opacity-60`}>
           WYDANIE
           <span className="text-xs font-medium text-muted-foreground">wkrótce</span>

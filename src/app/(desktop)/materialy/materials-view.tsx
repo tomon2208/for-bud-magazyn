@@ -16,6 +16,7 @@ import {
   MAX_SEARCH_LENGTH,
   UNIT_SUGGESTIONS,
 } from "@/lib/validation/catalog";
+import { unitAllowsFraction } from "@/lib/validation/stock";
 import type { CategoryDto, MaterialDto, MaterialPage, SupplierDto } from "@/server/catalog";
 
 const TEXTAREA_CLASS =
@@ -187,7 +188,10 @@ export function MaterialsView({
                   <TableCell className="font-mono">{m.code}</TableCell>
                   <TableCell>{m.name}</TableCell>
                   <TableCell>{m.categoryName}</TableCell>
-                  <TableCell>{m.unit}</TableCell>
+                  <TableCell>
+                    {m.unit}
+                    {m.allowsFraction && <span className="ml-1 text-xs text-muted-foreground">(ułamki)</span>}
+                  </TableCell>
                   <TableCell>{m.defaultSupplierName ?? "—"}</TableCell>
                   <TableCell>
                     {m.active ? <Badge variant="secondary">aktywny</Badge> : <Badge variant="destructive">nieaktywny</Badge>}
@@ -262,6 +266,8 @@ function MaterialForm({
   onSubmit: (data: MaterialPayload) => Promise<{ ok: boolean; fields?: Record<string, string> } | null>;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Podpowiedź wg jednostki przy każdej zmianie jednostki; ADMIN może ją zmienić (blokada po pierwszym ruchu w DB).
+  const [allowsFraction, setAllowsFraction] = useState(material?.allowsFraction ?? false);
 
   // Do wyboru tylko aktywne; bieżąca (nawet nieaktywna) wartość edytowanego materiału zostaje widoczna.
   const categoryOptions = categories.filter((c) => c.active || c.id === material?.categoryId);
@@ -276,6 +282,7 @@ function MaterialForm({
       name: form.get("name"),
       category_id: form.get("category_id"),
       unit: form.get("unit"),
+      allows_fraction: allowsFraction,
       default_supplier_id: supplier === "" ? null : supplier,
       notes: form.get("notes"),
     });
@@ -337,6 +344,7 @@ function MaterialForm({
               maxLength={20}
               autoComplete="off"
               aria-invalid={!!errors.unit}
+              onChange={(e) => setAllowsFraction(unitAllowsFraction(e.target.value))}
             />
             <datalist id="unit-suggestions">
               {UNIT_SUGGESTIONS.map((u) => (
@@ -344,6 +352,17 @@ function MaterialForm({
               ))}
             </datalist>
           </Field>
+          <div className="flex items-end pb-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="allows_fraction"
+                checked={allowsFraction}
+                onChange={(e) => setAllowsFraction(e.target.checked)}
+              />
+              Dopuszcza ułamki
+            </label>
+          </div>
           <Field id="mat-supplier" label="Domyślny dostawca" error={errors.default_supplier_id} className="lg:col-span-2">
             <select
               id="mat-supplier"

@@ -49,6 +49,7 @@ export const materialNameSchema = requiredName("nazwę materiału", 200);
 export const unitSchema = requiredName("jednostkę", 20);
 
 const activeSchema = z.boolean({ error: "Pole active musi być typu logicznego" });
+const allowsFractionSchema = z.boolean({ error: "Pole allows_fraction musi być typu logicznego" });
 const nonEmptyPatch = (v: Record<string, unknown>) => Object.values(v).some((x) => x !== undefined);
 const NO_CHANGES = { error: "Brak zmian do zapisania" };
 
@@ -101,6 +102,8 @@ export const createMaterialSchema = z
     name: materialNameSchema,
     category_id: idSchema("Wybierz kategorię"),
     unit: unitSchema,
+    // Brak pola → baza ustala wg jednostki (szt./sztanga/opak. → false).
+    allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
     notes: optionalText("Uwagi", 2000).optional(),
   })
@@ -113,6 +116,7 @@ export const updateMaterialSchema = z
     name: materialNameSchema.optional(),
     category_id: idSchema("Wybierz kategorię").optional(),
     unit: unitSchema.optional(),
+    allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
     notes: optionalText("Uwagi", 2000).optional(),
     active: activeSchema.optional(),

@@ -31,6 +31,13 @@ const CODE_TAKEN: ServiceError = { status: 409, code: "CODE_TAKEN", message: "Lo
 export function mapLocationDbError(error: DbError, context: string): ServiceError {
   if (error.code === "23505") return CODE_TAKEN;
   if (error.code === "42501") return { status: 403, code: "FORBIDDEN", message: "Brak uprawnień" };
+  if (error.code === "P0001" && error.hint === "LOCATION_NOT_EMPTY") {
+    return {
+      status: 409,
+      code: "LOCATION_NOT_EMPTY",
+      message: "Nie można dezaktywować lokalizacji, w której jest towar. Najpierw przesuń lub wydaj materiał.",
+    };
+  }
   if (error.code === "23514" || error.code === "22P02") {
     return { status: 400, code: "VALIDATION", message: "Nieprawidłowe dane" };
   }
