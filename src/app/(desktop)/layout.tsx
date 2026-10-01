@@ -10,7 +10,7 @@ export default async function DesktopLayout({ children }: LayoutProps<"/">) {
 
   return (
     <div className="flex min-h-screen flex-1 flex-col md:flex-row">
-      <aside className="flex flex-col gap-4 border-b bg-sidebar p-4 md:w-60 md:border-r md:border-b-0">
+      <aside className="flex flex-col gap-4 border-b bg-sidebar p-4 md:w-60 md:border-r md:border-b-0 print:hidden">
         <Link href="/dashboard" className="text-lg font-semibold">
           FOR-BUD Magazyn
         </Link>
@@ -18,6 +18,7 @@ export default async function DesktopLayout({ children }: LayoutProps<"/">) {
           <NavLink href="/dashboard">Dashboard</NavLink>
           <NavLink href="/materialy">Materiały</NavLink>
           <NavLink href="/dostawcy">Dostawcy</NavLink>
+          <NavLink href="/lokalizacje">Lokalizacje</NavLink>
           {user.role === "ADMIN" && <NavLink href="/kategorie">Kategorie</NavLink>}
           {user.role === "ADMIN" && <NavLink href="/admin/uzytkownicy">Użytkownicy</NavLink>}
         </nav>
@@ -36,7 +37,7 @@ export default async function DesktopLayout({ children }: LayoutProps<"/">) {
           <LogoutButton className="w-full" />
         </div>
       </aside>
-      <main className="flex-1 p-4 md:p-8">{children}</main>
+      <main className="flex-1 p-4 md:p-8 print:p-0">{children}</main>
     </div>
   );
 }

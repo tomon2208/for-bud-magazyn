@@ -5,7 +5,7 @@ import { requirePageRole } from "@/server/auth";
 
 export const metadata: Metadata = { title: "Terminal — FOR-BUD Magazyn" };
 
-const TILES = ["PRZYJĘCIE", "WYDANIE", "SZUKAJ", "LOKALIZACJE"] as const;
+const SOON_TILES = ["PRZYJĘCIE", "WYDANIE", "SZUKAJ"] as const;
 
 function SoonBadge() {
   return (
@@ -14,6 +14,8 @@ function SoonBadge() {
     </span>
   );
 }
+
+const TILE_BASE = "flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border text-xl font-semibold";
 
 export default async function MobileHomePage() {
   const user = await requirePageRole("PRODUKCJA", "ADMIN");
@@ -32,30 +34,30 @@ export default async function MobileHomePage() {
         <LogoutButton size="lg" className="h-12 px-5 text-base" />
       </header>
 
-      {/* Kafle nieaktywne do czasu wdrożenia modułów (Etap 3+). */}
-      <button
-        type="button"
-        disabled
-        aria-disabled="true"
-        className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-2xl bg-primary text-4xl font-bold tracking-wide text-primary-foreground opacity-60"
+      <Link
+        href="/m/skanuj"
+        className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-2xl bg-primary text-4xl font-bold tracking-wide text-primary-foreground active:opacity-80"
       >
         SKANUJ
-        <SoonBadge />
-      </button>
+      </Link>
 
       <div className="grid grid-cols-2 gap-4">
-        {TILES.map((label) => (
+        {/* Kafle nieaktywne do czasu wdrożenia modułów (Etap 4+). */}
+        {SOON_TILES.map((label) => (
           <button
             key={label}
             type="button"
             disabled
             aria-disabled="true"
-            className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border bg-background text-xl font-semibold opacity-60"
+            className={`${TILE_BASE} bg-background opacity-60`}
           >
             {label}
             <SoonBadge />
           </button>
         ))}
+        <Link href="/m/lokalizacje" className={`${TILE_BASE} bg-background active:bg-muted`}>
+          LOKALIZACJE
+        </Link>
       </div>
     </div>
   );

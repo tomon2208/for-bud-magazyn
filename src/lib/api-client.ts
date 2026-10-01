@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 
 export type ApiResult =
-  | { ok: true }
+  | { ok: true; data?: unknown }
   | { ok: false; message: string; fields: Record<string, string> };
 
 type ErrorBody = { error?: { code?: string; message?: string; fields?: Record<string, string[]> } };
@@ -20,7 +20,10 @@ export async function callApi(url: string, method: "POST" | "PATCH", body: unkno
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (res.ok) return { ok: true };
+    if (res.ok) {
+      const json = (await res.json().catch(() => null)) as { data?: unknown } | null;
+      return { ok: true, data: json?.data };
+    }
     const json = (await res.json().catch(() => null)) as ErrorBody | null;
     const fields: Record<string, string> = {};
     for (const [key, messages] of Object.entries(json?.error?.fields ?? {})) {

@@ -189,8 +189,9 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 **Etap 3 — lokalizacje i kody**: CRUD lokalizacji, `by-code`, strona wydruku etykiet QR (prosta), ekran SKANUJ (kamera + ręczne wpisanie kodu).
 
 **Etap 4 — rdzeń stocku + przyjęcia**: `stock`, `stock_operations`, `stock_movements`, triggery niemutowalności, `stock_receipt`, idempotencja; mobilny flow skan → materiał → ilość → zatwierdź; test równoległych przyjęć.
-- **Przed startem:** osobny projekt Supabase `forbud-prod` (produkcja nie może dzielić bazy z testami).
+- **Baza:** decyzja użytkownika (2026-10-01) — jeden projekt Supabase przez cały okres budowy (limit 2 projektów w planie Free, drugi slot zajęty). Dane w bazie do startu traktujemy jako testowe.
 - **Blokady kartoteki (z review Etapu 2):** zakaz zmiany `unit` materiału, gdy istnieją ruchy (`UNIT_LOCKED`); zakaz dezaktywacji materiału ze stanem ≠ 0 (`HAS_STOCK`, w Etapie 11 także z aktywnymi rezerwacjami); ruchy zawsze po `material_id`, nigdy po kodzie; zmiana kodu po imporcie LiczOkno — do decyzji w Etapie 12.
+- **Blokada lokalizacji (z review Etapu 3):** dezaktywacja lokalizacji tylko gdy suma stanu w niej = 0 (`LOCATION_NOT_EMPTY`).
 
 **Etap 5 — wydania i przesunięcia**: `stock_issue` (zlecenie lub powód), `stock_transfer`; test: dwa równoczesne wydania nie zejdą poniżej zera.
 
@@ -219,6 +220,12 @@ Poza MVP: automatyczne zamówienia, PDF/PZ/WZ, resztki profili, integracja onlin
 - Ręcznie: `pnpm preview` (lokalny Worker) w przeglądarce w trybie desktop i mobile (375 px) — realny przepływ przyjęcia/wydania.
 - `pnpm check:size` — Worker ≤ 2,5 MiB gzip; po deployu sprawdzenie CPU time w Cloudflare dashboard (< 10 ms dla typowych żądań).
 - Reviewer (agent) bez uwag CRITICAL przed zamknięciem etapu.
+
+## Start produkcyjny (checklista — przed wprowadzeniem prawdziwych danych)
+1. Wyzerowanie bazy: wszystkie tabele i konta testowe usunięte, migracje od zera (`supabase db reset --db-url …` lub nowy projekt), nowy ADMIN (`pnpm admin:create`), nowe silne hasło do bazy.
+2. Backup: codzienny `pg_dump` przez GitHub Actions (plan Free nie ma kopii) — uruchomiony i sprawdzone odtworzenie.
+3. **Testy po starcie:** `pnpm test:db` NIE może już działać na bazie produkcyjnej. Przed startem zdecydować: lokalny Supabase (Docker) do testów DB, albo zwolnienie drugiego projektu Supabase na bazę testową.
+4. Rotacja kluczy Supabase (secret) i aktualizacja sekretu w Cloudflare.
 
 ## Otwarte kwestie na później (nie blokują Etapu 0–3)
 - Czy PRODUKCJA może wydawać bez zlecenia każdy powód, czy z listy zamkniętej (powody jako słownik?) — rozstrzygniemy w Etapie 5.

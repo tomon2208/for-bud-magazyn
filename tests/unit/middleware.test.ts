@@ -134,3 +134,25 @@ describe("middleware — CSRF dla /api", () => {
     expect(isPassThrough(res)).toBe(true);
   });
 });
+
+describe("middleware — zepsute kodowanie w ścieżce skanera (Next zwróciłby 500)", () => {
+  beforeEach(() => {
+    session.sub = "u1";
+  });
+
+  it("API by-code → 404 UNKNOWN_CODE", async () => {
+    const res = await middleware(request("/api/v1/locations/by-code/%E0%A4%A"));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: { code: "UNKNOWN_CODE", message: "Nieznany kod lokalizacji" } });
+  });
+
+  it("strona /m/lokalizacje/[code] → rewrite na ekran nieznanego kodu", async () => {
+    const res = await middleware(request("/m/lokalizacje/%E0%A4%A"));
+    expect(res.headers.get("x-middleware-rewrite")).toContain("/m/lokalizacje/-");
+  });
+
+  it("poprawne kodowanie i inne ścieżki → bez zmian", async () => {
+    expect(isPassThrough(await middleware(request("/api/v1/locations/by-code/A%2DB")))).toBe(true);
+    expect(isPassThrough(await middleware(request("/m/lokalizacje/A-1")))).toBe(true);
+  });
+});

@@ -23,6 +23,15 @@ function secure<T extends Response>(res: T): T {
   return res;
 }
 
+function hasBrokenPercentEncoding(pathname: string): boolean {
+  try {
+    decodeURIComponent(pathname);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function apiError(status: number, code: string, message: string) {
   return secure(NextResponse.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } }));
 }
@@ -63,6 +72,19 @@ export async function middleware(request: NextRequest) {
   // Nie wstawiać kodu między utworzeniem klienta a getClaims() — tu następuje odświeżenie sesji.
   const { data } = await supabase.auth.getClaims();
   const isLoggedIn = Boolean(data?.claims?.sub);
+
+  if (isLoggedIn && hasBrokenPercentEncoding(pathname)) {
+    // Next.js zwraca 500 (DecodeError) dla niepoprawnego kodowania w parametrze ścieżki, zanim zadziała handler.
+    // Dla tras skanera (kod z QR/ręczny wpis) odpowiadamy jak na każdy nieznany kod.
+    if (pathname.startsWith("/api/v1/locations/by-code/")) {
+      return apiError(404, "UNKNOWN_CODE", "Nieznany kod lokalizacji");
+    }
+    if (pathname.startsWith("/m/lokalizacje/")) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/m/lokalizacje/-"; // "-" nie jest poprawnym kodem → ekran „Nieznany kod lokalizacji”
+      return NextResponse.rewrite(url, { request });
+    }
+  }
 
   if (isLoggedIn || PUBLIC_PATHS.includes(pathname)) {
     return response; // nagłówki bezpieczeństwa doda next.config.ts (bez duplikatów)
