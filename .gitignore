@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js / OpenNext / Wrangler
+.next/
+out/
+.open-next/
+.wrangler/
+*.tsbuildinfo
+next-env.d.ts
+
+# env & secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+
+# tests / misc
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.dev.vars*

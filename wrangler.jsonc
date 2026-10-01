@@ -1,0 +1,19 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"main": ".open-next/worker.js",
+	"name": "forbud-magazyn",
+	"compatibility_date": "2026-09-30",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			// Self-reference wymagany przez OpenNext; nazwa = nazwa Workera
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "forbud-magazyn"
+		}
+	]
+	// Celowo bez R2 (incremental cache) i Images — darmowy plan, patrz docs/PLAN.md sekcja 0
+}
