@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  supabase: true
   workerd: true
   sharp: false
   unrs-resolver: false

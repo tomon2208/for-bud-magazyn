@@ -20,5 +20,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm cf:build
+      - name: Brak sekretów w artefaktach buildu
+        run: pnpm check:secrets
       - name: Budżet rozmiaru Workera (darmowy plan)
         run: pnpm check:size

@@ -1,0 +1,6 @@
+# Nagłówki dla statycznych assetów (Cloudflare Workers Static Assets). Trzymać w zgodzie z src/lib/security-headers.ts.
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

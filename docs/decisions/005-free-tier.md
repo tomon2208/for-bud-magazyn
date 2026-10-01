@@ -33,4 +33,4 @@ Supabase Free:
 ## Uwagi środowiskowe (Windows)
 
 - `nodeLinker: hoisted` w `pnpm-workspace.yaml` — OpenNext przy budowie tworzy symlinki, których Windows bez trybu dewelopera nie pozwala tworzyć.
-- Dozwolone skrypty instalacyjne: tylko `esbuild` i `workerd` (natywne binaria wymagane przez wrangler).
+- Dozwolone skrypty instalacyjne: `esbuild` i `workerd` (natywne binaria wymagane przez wrangler) oraz `supabase` (pobiera binarkę Supabase CLI używaną przez `pnpm db:push`; tylko devDependency, nie trafia do Workera).

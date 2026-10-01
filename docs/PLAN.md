@@ -69,7 +69,7 @@ Dlaczego logika stocku w funkcjach DB: Workers nie trzymają długich połącze�
 
 ### Autoryzacja i role
 - `profiles` (1:1 z `auth.users`): `role` enum `ADMIN | BIURO | PRODUKCJA`, `active`.
-- Helper SQL `app.current_role()` czyta rolę z `profiles` dla `auth.uid()`; nieaktywny użytkownik = brak dostępu.
+- Helper SQL `app.user_role()` czyta rolę z `profiles` dla `auth.uid()`; nieaktywny użytkownik = brak dostępu.
 - RLS: SELECT dla ról wg docs/ROLES.md; zapis słowników (materiały, lokalizacje, dostawcy) przez polityki per rola; stock/ruchy/rezerwacje — zapis wyłącznie przez funkcje.
 - Next.js middleware odświeża sesję i przekierowuje niezalogowanych; guard `requireRole()` w każdym route handlerze.
 - Użytkowników tworzy ADMIN w aplikacji (brak publicznej rejestracji).
@@ -182,7 +182,7 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 - **Bramka free tier** (sekcja 0): pomiar rozmiaru Workera i CPU na testowym deployu → decyzja: jedna aplikacja vs plan B; zapis w ADR 005.
 - GitHub Actions: lint/typecheck/test/build + `check:size` na każdym pushu.
 
-**Etap 1 — auth i role**: migracja `profiles` + enum ról + `app.current_role()`, logowanie, middleware, layout desktop i osobny layout mobilny `/m`, panel ADMIN użytkowników, testy dostępu per rola.
+**Etap 1 — auth i role**: migracja `profiles` + enum ról + `app.user_role()`, logowanie, middleware, layout desktop i osobny layout mobilny `/m`, panel ADMIN użytkowników, testy dostępu per rola.
 
 **Etap 2 — kartoteki**: kategorie, dostawcy, materiały (CRUD, wyszukiwanie, aktywny/nieaktywny), RLS.
 
@@ -220,5 +220,5 @@ Poza MVP: automatyczne zamówienia, PDF/PZ/WZ, resztki profili, integracja onlin
 
 ## Otwarte kwestie na później (nie blokują Etapu 0–3)
 - Czy PRODUKCJA może wydawać bez zlecenia każdy powód, czy z listy zamkniętej (powody jako słownik?) — rozstrzygniemy w Etapie 5.
-- Logowanie pracowników produkcji: e-mail+hasło vs login/PIN — rozstrzygniemy w Etapie 1.
+- ~~Logowanie pracowników~~ — ROZSTRZYGNIĘTE: login + hasło nadawane przez ADMIN; pod spodem techniczny e-mail `<login>@forbud.local` w Supabase Auth.
 - Formaty plików LiczOkno — po dostarczeniu przykładów.
