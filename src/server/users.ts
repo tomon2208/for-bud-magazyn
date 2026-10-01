@@ -40,6 +40,22 @@ const INTERNAL: ServiceError = {
   message: "Wystąpił błąd serwera. Spróbuj ponownie.",
 };
 
+const SERVER_CONFIG: ServiceError = {
+  status: 500,
+  code: "SERVER_CONFIG",
+  message: "Brak konfiguracji serwera (klucz Supabase). Skontaktuj się z administratorem systemu.",
+};
+
+/** Klient z kluczem secret; brak klucza w środowisku = czytelny błąd zamiast nieobsłużonego wyjątku. */
+function getAdminClient(): ReturnType<typeof createSupabaseAdminClient> | null {
+  try {
+    return createSupabaseAdminClient();
+  } catch (e) {
+    console.error("Brak konfiguracji klienta admin:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 const LOGIN_TAKEN: ServiceError = {
   status: 409,
   code: "LOGIN_TAKEN",
@@ -95,7 +111,8 @@ export function isLastAdminError(err: { code?: string; hint?: string | null }) {
  * (app_metadata może ustawić wyłącznie klucz secret).
  */
 export async function createUser(input: CreateUserInput): Promise<ServiceResult<UserDto>> {
-  const admin = createSupabaseAdminClient();
+  const admin = getAdminClient();
+  if (!admin) return { ok: false, error: SERVER_CONFIG };
 
   // Szybka, czytelna odpowiedź przy zajętym loginie (ostatecznie pilnuje unikalny e-mail w Auth).
   const { data: existing, error: existingError } = await admin
@@ -154,7 +171,8 @@ export async function updateUser(
     };
   }
 
-  const admin = createSupabaseAdminClient();
+  const admin = getAdminClient();
+  if (!admin) return { ok: false, error: SERVER_CONFIG };
 
   const { data: current, error: currentError } = await admin
     .from("profiles")
