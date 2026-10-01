@@ -1,8 +1,11 @@
 "use client";
 
-// Klient operacji magazynowych (przeglądarka). Rozróżnia błąd SIECI (wynik nieznany — ponów z tym samym
-// client_request_id) od błędu DOMENOWEGO (serwer odrzucił — popraw dane). Odpowiedź 5xx też traktujemy
-// jako „wynik nieznany”: ponowienie z tym samym id jest bezpieczne (idempotencja w bazie).
+// Klient operacji magazynowych (przeglądarka) — jeden dla przyjęcia, wydania i przesunięcia. Rozróżnia błąd
+// SIECI (wynik nieznany — ponów z tym samym client_request_id) od błędu DOMENOWEGO (serwer odrzucił — popraw
+// dane). Odpowiedź 5xx też traktujemy jako „wynik nieznany”: ponowienie z tym samym id jest bezpieczne
+// (idempotencja w bazie).
+
+export type OperationKind = "RECEIPT" | "ISSUE" | "TRANSFER";
 
 export type ReceiptResponse = {
   operationId: string;
@@ -14,11 +17,28 @@ export type ReceiptResponse = {
   idempotentReplay: boolean;
 };
 
-export type SubmitResult<T> =
-  | { kind: "ok"; data: T }
-  | { kind: "network"; message: string }
-  | { kind: "auth"; message: string }
-  | { kind: "error"; status: number; code: string; message: string };
+export type IssueResponse = {
+  operationId: string;
+  movementId: string;
+  materialId: string;
+  locationId: string;
+  quantity: number;
+  productionOrderId: string | null;
+  reasonCode: string | null;
+  remainingLocationQuantity: number;
+  idempotentReplay: boolean;
+};
+
+export type TransferResponse = {
+  operationId: string;
+  materialId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  quantity: number;
+  fromLocationQuantity: number;
+  toLocationQuantity: number;
+  idempotentReplay: boolean;
+};
 
 export type ReceiptPayload = {
   client_request_id: string;
@@ -30,10 +50,62 @@ export type ReceiptPayload = {
   note?: string | null;
 };
 
-export async function submitReceipt(payload: ReceiptPayload): Promise<SubmitResult<ReceiptResponse>> {
+export type IssuePayload = {
+  client_request_id: string;
+  location_id: string;
+  material_id: string;
+  quantity: number;
+  production_order_id?: string | null;
+  reason_code?: string | null;
+  reason?: string | null;
+  note?: string | null;
+};
+
+export type TransferPayload = {
+  client_request_id: string;
+  material_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  quantity: number;
+  note?: string | null;
+};
+
+export type PayloadOf<K extends OperationKind> = K extends "RECEIPT"
+  ? ReceiptPayload
+  : K extends "ISSUE"
+    ? IssuePayload
+    : TransferPayload;
+export type ResponseOf<K extends OperationKind> = K extends "RECEIPT"
+  ? ReceiptResponse
+  : K extends "ISSUE"
+    ? IssueResponse
+    : TransferResponse;
+
+export type SubmitResult<T> =
+  | { kind: "ok"; data: T }
+  | { kind: "network"; message: string }
+  | { kind: "auth"; message: string }
+  | { kind: "error"; status: number; code: string; message: string; available?: number };
+
+export const OPERATION_ENDPOINTS: Record<OperationKind, string> = {
+  RECEIPT: "/api/v1/stock/receipts",
+  ISSUE: "/api/v1/stock/issues",
+  TRANSFER: "/api/v1/stock/transfers",
+};
+
+const AUTH_MESSAGES: Record<OperationKind, string> = {
+  RECEIPT: "Sesja wygasła — zaloguj się; przyjęcie zostanie dokończone.",
+  ISSUE: "Sesja wygasła — zaloguj się; wydanie zostanie dokończone.",
+  TRANSFER: "Sesja wygasła — zaloguj się; przesunięcie zostanie dokończone.",
+};
+
+export async function submitOperation<K extends OperationKind>(
+  kind: K,
+  payload: PayloadOf<K>,
+): Promise<SubmitResult<ResponseOf<K>>> {
   let res: Response;
   try {
-    res = await fetch("/api/v1/stock/receipts", {
+    res = await fetch(OPERATION_ENDPOINTS[kind], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -42,8 +114,8 @@ export async function submitReceipt(payload: ReceiptPayload): Promise<SubmitResu
     return { kind: "network", message: "Brak połączenia z serwerem. Operacja mogła nie zostać zapisana." };
   }
   const json = (await res.json().catch(() => null)) as {
-    data?: ReceiptResponse;
-    error?: { code?: string; message?: string };
+    data?: ResponseOf<K>;
+    error?: { code?: string; message?: string; details?: { available?: unknown } };
   } | null;
   if (res.ok && json?.data) return { kind: "ok", data: json.data };
   if (res.status >= 500 || !json) {
@@ -51,17 +123,19 @@ export async function submitReceipt(payload: ReceiptPayload): Promise<SubmitResu
   }
   if (res.status === 401) {
     // Operacja nie została wykonana (brak sesji), ale jej nie porzucamy — po zalogowaniu można ją dokończyć.
-    return { kind: "auth", message: "Sesja wygasła — zaloguj się; przyjęcie zostanie dokończone." };
+    return { kind: "auth", message: AUTH_MESSAGES[kind] };
   }
   if (res.status === 409 && json.error?.code === "RETRY") {
     // unique(client_request_id) — operacja w toku albo już zapisana: wynik nieznany, ponowienie tym samym id.
     return { kind: "network", message: "Operacja jest w toku albo została już zapisana. Ponów — nie zostanie zdublowana." };
   }
+  const available = json.error?.details?.available;
   return {
     kind: "error",
     status: res.status,
     code: json.error?.code ?? "ERROR",
     message: json.error?.message ?? `Błąd (${res.status})`,
+    ...(typeof available === "number" ? { available } : {}),
   };
 }
 
@@ -76,6 +150,39 @@ export async function fetchLocationByCode(
     const json = (await res.json().catch(() => null)) as { data?: ScannedLocation; error?: { message?: string } } | null;
     if (res.ok && json?.data) return { kind: "ok", data: json.data };
     if (res.status === 404) return { kind: "error", message: `Nieznany kod lokalizacji: ${code}` };
+    return { kind: "error", message: json?.error?.message ?? `Błąd (${res.status})` };
+  } catch {
+    return { kind: "error", message: "Brak połączenia z serwerem. Spróbuj ponownie." };
+  }
+}
+
+/** Wiersz stanu (GET /api/v1/stock). */
+export type StockRow = {
+  materialId: string;
+  materialCode: string;
+  materialName: string;
+  unit: string;
+  allowsFraction: boolean;
+  materialActive: boolean;
+  locationId: string;
+  locationCode: string;
+  locationName: string | null;
+  locationActive: boolean;
+  quantity: number;
+};
+
+/** Stany > 0 dla materiału albo lokalizacji (wybór lokalizacji przy wydaniu / zawartość lokalizacji). */
+export async function fetchStock(
+  filter: { materialId?: string; locationId?: string },
+): Promise<{ kind: "ok"; items: StockRow[] } | { kind: "error"; message: string }> {
+  const params = new URLSearchParams({ pageSize: "500" });
+  if (filter.materialId) params.set("materialId", filter.materialId);
+  if (filter.locationId) params.set("locationId", filter.locationId);
+  try {
+    const res = await fetch(`/api/v1/stock?${params}`);
+    const json = (await res.json().catch(() => null)) as { data?: { items: StockRow[] }; error?: { message?: string } } | null;
+    if (res.ok && json?.data) return { kind: "ok", items: json.data.items };
+    if (res.status === 401) return { kind: "error", message: "Sesja wygasła — zaloguj się ponownie." };
     return { kind: "error", message: json?.error?.message ?? `Błąd (${res.status})` };
   } catch {
     return { kind: "error", message: "Brak połączenia z serwerem. Spróbuj ponownie." };

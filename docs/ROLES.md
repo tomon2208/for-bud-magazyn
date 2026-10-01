@@ -37,3 +37,8 @@ Uprawnienia muszą być egzekwowane po stronie backendu, nie tylko przez ukrywan
 
 - Historia ruchów: ADMIN i BIURO widzą wszystkie operacje i ruchy; PRODUKCJA — wyłącznie własne (RLS + `list_stock_movements`). Stany (`stock`, `v_stock`) widzą wszyscy aktywni.
 - Konta, które wykonały jakąkolwiek operację magazynową, tylko **dezaktywujemy**. Usunięcie konta blokuje klucz obcy `stock_operations/stock_movements.user_id → profiles` — celowo, żeby historia zawsze wskazywała autora.
+
+## Uwagi techniczne (Etap 5, ADR 010)
+
+- Zlecenia: tworzą, edytują i zmieniają status BIURO i ADMIN; wszyscy aktywni czytają (PRODUKCJA wybiera otwarte zlecenie przy wydaniu). Zleceń nie usuwamy.
+- Wydania i przesunięcia: PRODUKCJA i ADMIN (terminal; ADMIN także formularze na desktopie). BIURO ogląda listy „Wydania”/„Przesunięcia”.

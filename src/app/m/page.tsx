@@ -2,34 +2,37 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoutButton } from "@/components/logout-button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { formatQuantityUnit } from "@/lib/validation/stock";
+import { formatQuantityUnit, issueReasonLabel } from "@/lib/validation/stock";
 import { requirePageRole } from "@/server/auth";
-import { listMyRecentReceipts } from "@/server/stock";
-import { PendingReceiptBanner } from "./pending-banner";
+import { listMyRecentOperations, type MyOperationDto } from "@/server/stock";
+import { PendingOperationsBanner } from "./pending-banner";
 
 export const metadata: Metadata = { title: "Terminal — FOR-BUD Magazyn" };
-
-const SOON_TILES = ["WYDANIE", "SZUKAJ"] as const;
-
-function SoonBadge() {
-  return (
-    <span className="rounded-full bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground">
-      wkrótce
-    </span>
-  );
-}
 
 const TIME = new Intl.DateTimeFormat("pl-PL", { hour: "2-digit", minute: "2-digit", day: "numeric", month: "numeric", timeZone: "Europe/Warsaw" });
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Początek okna „ostatnie 24 h” (czas żądania). */
 const last24h = () => new Date(Date.now() - DAY_MS).toISOString();
 
-const TILE_BASE = "flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border text-xl font-semibold";
+const TILE_BIG = "flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border text-xl font-semibold";
+const TILE_SMALL = "flex min-h-16 flex-col items-center justify-center rounded-2xl border px-2 text-base font-semibold";
+
+const TYPE_LABEL: Record<string, { text: string; className: string }> = {
+  RECEIPT: { text: "Przyjęcie", className: "bg-emerald-100 text-emerald-900" },
+  ISSUE: { text: "Wydanie", className: "bg-sky-100 text-sky-900" },
+  TRANSFER: { text: "Przesunięcie", className: "bg-violet-100 text-violet-900" },
+};
+
+function describe(op: MyOperationDto): string {
+  if (op.type === "RECEIPT") return `→ ${op.locationCode}`;
+  if (op.type === "TRANSFER") return `${op.locationCode} → ${op.toLocationCode ?? "?"}`;
+  return `z ${op.locationCode} · ${op.orderName ?? issueReasonLabel(op.reasonCode)}`;
+}
 
 export default async function MobileHomePage() {
   const user = await requirePageRole("PRODUKCJA", "ADMIN");
   const since = last24h();
-  const mine = await listMyRecentReceipts(await createSupabaseServerClient(), user.id, { since, limit: 10 });
+  const mine = await listMyRecentOperations(await createSupabaseServerClient(), user.id, { since, limit: 10 });
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
@@ -45,7 +48,7 @@ export default async function MobileHomePage() {
         <LogoutButton size="lg" className="h-12 px-5 text-base" />
       </header>
 
-      <PendingReceiptBanner userId={user.id} />
+      <PendingOperationsBanner userId={user.id} />
 
       <Link
         href="/m/skanuj"
@@ -55,46 +58,55 @@ export default async function MobileHomePage() {
       </Link>
 
       <div className="grid grid-cols-2 gap-4">
-        <Link href="/m/przyjecie" className={`${TILE_BASE} bg-background active:bg-muted`}>
+        <Link href="/m/przyjecie" className={`${TILE_BIG} bg-background active:bg-muted`}>
           PRZYJĘCIE
         </Link>
-        {/* Kafle nieaktywne do czasu wdrożenia modułów (Etap 5+). */}
-        {SOON_TILES.map((label) => (
-          <button
-            key={label}
-            type="button"
-            disabled
-            aria-disabled="true"
-            className={`${TILE_BASE} bg-background opacity-60`}
-          >
-            {label}
-            <SoonBadge />
-          </button>
-        ))}
-        <Link href="/m/lokalizacje" className={`${TILE_BASE} bg-background active:bg-muted`}>
-          LOKALIZACJE
+        <Link href="/m/wydanie" className={`${TILE_BIG} bg-background active:bg-muted`}>
+          WYDANIE
         </Link>
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/m/przesuniecie" className={`${TILE_SMALL} bg-background active:bg-muted`}>
+          PRZESUNIĘCIE
+        </Link>
+        <Link href="/m/lokalizacje" className={`${TILE_SMALL} bg-background active:bg-muted`}>
+          LOKALIZACJE
+        </Link>
+        {/* Nieaktywne do czasu wdrożenia (Etap 7). */}
+        <button type="button" disabled aria-disabled="true" className={`${TILE_SMALL} bg-background opacity-60`}>
+          SZUKAJ
+          <span className="text-xs font-medium text-muted-foreground">wkrótce</span>
+        </button>
+      </div>
+
       <section className="rounded-2xl border bg-background p-4">
-        <h2 className="mb-2 text-lg font-semibold">Moje ostatnie przyjęcia (24 h)</h2>
+        <h2 className="mb-2 text-lg font-semibold">Moje ostatnie operacje (24 h)</h2>
         {!mine.ok ? (
           <p role="alert" className="text-destructive">
-            Nie udało się wczytać przyjęć.
+            Nie udało się wczytać operacji.
           </p>
         ) : mine.data.length === 0 ? (
-          <p className="text-muted-foreground">Brak przyjęć w ostatnich 24 godzinach.</p>
+          <p className="text-muted-foreground">Brak operacji w ostatnich 24 godzinach.</p>
         ) : (
           <ul className="divide-y">
             {mine.data.map((r) => (
-              <li key={r.movementId} className="flex items-center justify-between gap-3 py-2">
+              <li key={r.operationId} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0">
-                  <div className="font-mono font-bold break-all">{r.materialCode}</div>
-                  <div className="text-sm text-muted-foreground">
-                    {TIME.format(new Date(r.createdAt))} · {r.locationCode}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-md px-1.5 text-xs font-semibold ${TYPE_LABEL[r.type]?.className ?? "bg-muted"}`}>
+                      {TYPE_LABEL[r.type]?.text ?? r.type}
+                    </span>
+                    <span className="font-mono font-bold break-all">{r.materialCode}</span>
+                  </div>
+                  <div className="text-sm break-words text-muted-foreground">
+                    {TIME.format(new Date(r.createdAt))} · {describe(r)}
                   </div>
                 </div>
-                <div className="shrink-0 text-lg font-bold whitespace-nowrap">{formatQuantityUnit(r.quantity, r.unit)}</div>
+                <div className="shrink-0 text-lg font-bold whitespace-nowrap">
+                  {r.type === "ISSUE" ? "−" : ""}
+                  {formatQuantityUnit(r.quantity, r.unit)}
+                </div>
               </li>
             ))}
           </ul>

@@ -194,10 +194,13 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 - **Blokada lokalizacji (z review Etapu 3):** dezaktywacja lokalizacji tylko gdy suma stanu w niej = 0 (`LOCATION_NOT_EMPTY`).
 
 **Etap 5 — wydania i przesunięcia**: `stock_issue` (zlecenie lub powód), `stock_transfer`; test: dwa równoczesne wydania nie zejdą poniżej zera.
+- Zrealizowano (ADR 010): `stock_issue` (zlecenie ALBO powód z listy SERWIS/USZKODZENIE/ZUZYCIE_WLASNE/PROBKA/INNY), `stock_transfer`, proste zlecenia (`production_orders`: nazwa, notatka, status), terminal WYDANIE/PRZESUNIĘCIE, desktop „Zlecenia” i „Wydania”. Rozstrzygnięta otwarta kwestia powodów: stała lista kodów.
 
 **Etap 6 — korekty i historia ruchów**: `stock_adjust` (ADMIN, powód), widok historii z filtrami, `verify_stock()`.
+- Decyzje użytkownika (2026-10-02): korekta = „ustaw stan na X” (system liczy różnicę i zapisuje ruch ADJUSTMENT z powodem); ADMIN ma „Cofnij ten ruch” w historii — storno (ruch odwrotny powiązany z oryginałem, z powodem; oryginał oznaczony jako cofnięty; nie da się cofnąć dwa razy ani zejść poniżej zera).
 
 **Etap 7 — dashboard i stany**: stan per materiał/lokalizacja, zawartość lokalizacji, wyszukiwanie mobilne.
+- Decyzje użytkownika (2026-10-02): opcjonalny „stan minimalny” w kartotece materiału (puste = brak alarmu), dashboard z listą materiałów poniżej minimum; eksport stanów do CSV (Excel, polskie znaki, przecinek dziesiętny, bez nowych bibliotek).
 
 **Etap 8 — zlecenia**: CRUD, statusy, wybór zlecenia przy wydaniu.
 

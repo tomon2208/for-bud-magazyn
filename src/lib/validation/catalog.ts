@@ -146,10 +146,12 @@ export const listMaterialsQuerySchema = z.object({
   q: searchParam,
   categoryId: idSchema("Nieprawidłowa kategoria").optional(),
   includeInactive: boolParam,
+  /** Tylko materiały ze stanem > 0 w jakiejkolwiek lokalizacji (wybór materiału przy wydaniu). */
+  inStock: boolParam,
   page: z.coerce.number().int().min(1).max(100_000).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional().default(DEFAULT_PAGE_SIZE),
 });
-export type ListMaterialsQuery = z.infer<typeof listMaterialsQuerySchema>;
+export type ListMaterialsQuery = Omit<z.infer<typeof listMaterialsQuerySchema>, "inStock"> & { inStock?: boolean };
 
 /**
  * Wzorzec LIKE "zawiera" z dosłownym traktowaniem znaków specjalnych (`\`, `%`, `_`).

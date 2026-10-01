@@ -23,18 +23,23 @@ const PAGE_SIZE = 20;
 
 /**
  * Wyszukiwarka aktywnych materiałów (kod/nazwa, debounce) z dużymi wierszami do dotyku.
- * Bez frazy pokazuje „ostatnio przyjmowane” (jeśli podane).
+ * Bez frazy pokazuje ostatnio używane (jeśli podane). `inStock` — tylko materiały, które są na stanie
+ * (wydanie); wtedy także nieaktywne (mogą mieć jeszcze stan do wydania).
  */
 export function MaterialPicker({
   onSelect,
   recent = [],
   size = "lg",
   autoFocus = false,
+  inStock = false,
+  recentLabel = "Ostatnio używane",
 }: {
   onSelect: (m: PickedMaterial) => void;
   recent?: PickedMaterial[];
   size?: "lg" | "md";
   autoFocus?: boolean;
+  inStock?: boolean;
+  recentLabel?: string;
 }) {
   const [q, setQ] = useState("");
   const [state, setState] = useState<SearchState>({ kind: "idle" });
@@ -47,6 +52,10 @@ export function MaterialPicker({
       setState({ kind: "loading" });
       try {
         const params = new URLSearchParams({ q: term, pageSize: String(PAGE_SIZE) });
+        if (inStock) {
+          params.set("inStock", "true");
+          params.set("includeInactive", "true");
+        }
         const res = await fetch(`/api/v1/materials?${params}`, { signal: controller.signal });
         const json = (await res.json().catch(() => null)) as {
           data?: { items: PickedMaterial[]; total: number };
@@ -65,7 +74,7 @@ export function MaterialPicker({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [term]);
+  }, [term, inStock]);
 
   const lg = size === "lg";
   const rowClass = lg
@@ -106,7 +115,7 @@ export function MaterialPicker({
       {showRecent && (
         <>
           <p className={lg ? "text-base font-semibold text-muted-foreground" : "text-xs text-muted-foreground"}>
-            Ostatnio przyjmowane
+            {recentLabel}
           </p>
           <ul className="flex flex-col gap-2">
             {recent.map(renderRow)}
@@ -126,7 +135,7 @@ export function MaterialPicker({
         <>
           {state.items.length === 0 ? (
             <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">
-              Brak aktywnych materiałów dla tej frazy.
+              {inStock ? "Brak materiałów na stanie dla tej frazy." : "Brak aktywnych materiałów dla tej frazy."}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">

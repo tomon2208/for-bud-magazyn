@@ -1,24 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Field, NoticeBox, SELECT_CLASS } from "@/components/form-parts";
+import { useEffect, useState, type FormEvent } from "react";
+import { Field, NoticeBox, SELECT_CLASS, UnresolvedAttemptAlert } from "@/components/form-parts";
 import { MaterialPicker, type PickedMaterial } from "@/components/material-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Notice } from "@/lib/api-client";
-import {
-  canEdit,
-  discardAttempt,
-  finishSend,
-  initialAttempt,
-  isUnresolved,
-  startSend,
-  type Attempt,
-} from "@/lib/receipt-attempt";
-import { fetchLocationByCode, submitReceipt, type ReceiptPayload } from "@/lib/stock-client";
+import { fetchLocationByCode, submitOperation, type ReceiptPayload } from "@/lib/stock-client";
+import { useOperationAttempt } from "@/lib/use-operation-attempt";
 import { MAX_SEARCH_LENGTH } from "@/lib/validation/catalog";
 import { parseScannedCode } from "@/lib/validation/locations";
 import {
@@ -212,18 +204,13 @@ function DesktopReceiptForm({
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
-  // Cykl próby zapisu (receipt-attempt): po wyniku nieznanym dane zamrożone, ponowienie = ten sam id i payload.
-  const [attempt, setAttempt] = useState<Attempt<ReceiptPayload>>(initialAttempt);
-  const attemptRef = useRef(attempt); // bieżący stan dla handlera (blokada podwójnego kliknięcia)
+  // Wspólny cykl próby zapisu (operation-attempt): po wyniku nieznanym dane zamrożone, ponowienie = ten sam id i payload.
+  const att = useOperationAttempt<ReceiptPayload>();
   const [lookingUp, setLookingUp] = useState(false);
   const [sentLabel, setSentLabel] = useState<{ code: string; unit: string; locationCode: string } | null>(null);
 
-  const setAttemptBoth = (a: Attempt<ReceiptPayload>) => {
-    attemptRef.current = a;
-    setAttempt(a);
-  };
-  const locked = !canEdit(attempt) || lookingUp;
-  const unresolved = isUnresolved(attempt);
+  const locked = att.locked || lookingUp;
+  const unresolved = att.unresolved;
 
   function chooseMaterial(m: PickedMaterial) {
     setNotice(null);
@@ -233,12 +220,13 @@ function DesktopReceiptForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const current = attemptRef.current;
+    const current = att.current();
     if (current.status === "sending" || lookingUp) return;
 
-    let payload: ReceiptPayload | null = current.payload;
+    const retrying = current.status === "unknown" || current.status === "auth";
+    let payload: ReceiptPayload | null = null;
     let label = sentLabel;
-    if (!isUnresolved(current)) {
+    if (!retrying) {
       // Nowe dane: walidacja i rozpoznanie lokalizacji.
       const errs: Record<string, string> = {};
       const code = parseScannedCode(locationCode);
@@ -264,18 +252,12 @@ function DesktopReceiptForm({
       };
       label = { code: material.code, unit: material.unit, locationCode: loc.data.code };
     }
-    if (!payload || !label) return;
+    if (!label || (!retrying && !payload)) return;
 
-    const started = startSend(attemptRef.current, payload, () => crypto.randomUUID());
-    if (!started) return;
-    const body = { ...started.payload, client_request_id: started.requestId };
-    setAttemptBoth({ ...started.next, payload: body });
     setSentLabel(label);
     setNotice(null);
-
-    const res = await submitReceipt(body);
-    const next = finishSend({ ...started.next, payload: body }, res.kind);
-    setAttemptBoth(next);
+    const res = await att.run(payload, (body) => submitOperation("RECEIPT", body));
+    if (!res) return;
     if (res.kind === "ok") {
       const replay = res.data.idempotentReplay ? " (operacja była już zapisana — bez duplikatu)" : "";
       setNotice({
@@ -298,7 +280,7 @@ function DesktopReceiptForm({
 
   function discard() {
     if (!window.confirm("Porzucić niepotwierdzone przyjęcie? Sprawdź na liście przyjęć, czy zostało zapisane.")) return;
-    setAttemptBoth(discardAttempt());
+    att.discard();
     setSentLabel(null);
     setNotice({ kind: "ok", text: "Porzucono. Sprawdź na liście przyjęć poniżej, czy operacja została zapisana." });
     onSaved();
@@ -311,19 +293,7 @@ function DesktopReceiptForm({
       </CardHeader>
       <CardContent className="space-y-4">
         <NoticeBox notice={notice} />
-        {unresolved && (
-          <div role="alert" className="rounded-md bg-amber-100 p-3 text-sm text-amber-950">
-            <p className="font-semibold">
-              {attempt.status === "auth"
-                ? "Sesja wygasła — zaloguj się w nowej karcie, potem ponów (ten sam identyfikator, bez duplikatu)."
-                : "Nie wiadomo, czy przyjęcie zostało zapisane (brak odpowiedzi serwera)."}
-            </p>
-            <p>
-              Dane są zablokowane. Ponów to samo żądanie — jeśli zostało już zapisane, nie zostanie zdublowane — albo
-              porzuć je i sprawdź wynik na liście przyjęć.
-            </p>
-          </div>
-        )}
+        {unresolved && <UnresolvedAttemptAlert status={att.attempt.status} what="przyjęcie" listName="przyjęć" />}
         <form onSubmit={submit} noValidate className="grid gap-4 lg:grid-cols-2">
           <fieldset disabled={locked} className="contents">
             <div className="space-y-4">
@@ -406,15 +376,15 @@ function DesktopReceiptForm({
             </div>
           </fieldset>
           <div className="flex flex-wrap gap-2 lg:col-span-2">
-            <Button type="submit" disabled={attempt.status === "sending" || lookingUp}>
-              {attempt.status === "sending" || lookingUp ? "Zapisywanie…" : unresolved ? "Ponów (ten sam id)" : "Przyjmij"}
+            <Button type="submit" disabled={att.sending || lookingUp}>
+              {att.sending || lookingUp ? "Zapisywanie…" : unresolved ? "Ponów (ten sam id)" : "Przyjmij"}
             </Button>
             {unresolved ? (
               <Button type="button" variant="outline" onClick={discard}>
                 Porzuć — sprawdzę na liście przyjęć
               </Button>
             ) : (
-              <Button type="button" variant="outline" disabled={attempt.status === "sending" || lookingUp} onClick={onClose}>
+              <Button type="button" variant="outline" disabled={att.sending || lookingUp} onClick={onClose}>
                 Zamknij
               </Button>
             )}

@@ -64,7 +64,7 @@ export function checkQuantity(raw: unknown, allowsFraction = true): QuantityChec
   if (!(value > 0)) return { ok: false, message: "Ilość musi być większa od zera" };
   if (value > MAX_QUANTITY) return { ok: false, message: "Ilość może wynosić maksymalnie 1 000 000" };
   if (!allowsFraction && !Number.isInteger(value)) {
-    return { ok: false, message: "Ten materiał przyjmuje się w całych jednostkach (bez ułamków)" };
+    return { ok: false, message: "Ten materiał liczy się w całych jednostkach (bez ułamków)" };
   }
   return { ok: true, value };
 }
@@ -103,6 +103,74 @@ export const receiptSchema = z
   .strict();
 export type ReceiptInput = z.infer<typeof receiptSchema>;
 
+// ---- wydanie ----------------------------------------------------------------
+/** Powody wydania bez zlecenia (stała lista — CHECK w DB). INNY wymaga opisu. */
+export const ISSUE_REASONS = ["SERWIS", "USZKODZENIE", "ZUZYCIE_WLASNE", "PROBKA", "INNY"] as const;
+export type IssueReasonCode = (typeof ISSUE_REASONS)[number];
+export const ISSUE_REASON_LABELS: Record<IssueReasonCode, string> = {
+  SERWIS: "Serwis / reklamacja",
+  USZKODZENIE: "Uszkodzenie",
+  ZUZYCIE_WLASNE: "Zużycie własne",
+  PROBKA: "Próbka",
+  INNY: "Inny",
+};
+export const MAX_REASON_LENGTH = 200;
+
+/** Etykieta powodu (nieznany kod → sam kod). */
+export function issueReasonLabel(code: string | null | undefined): string {
+  return code && code in ISSUE_REASON_LABELS ? ISSUE_REASON_LABELS[code as IssueReasonCode] : (code ?? "");
+}
+
+/**
+ * POST /api/v1/stock/issues. Dokładnie jedno: production_order_id ALBO reason_code; INNY wymaga opisu (reason);
+ * opis tylko przy wydaniu bez zlecenia. Status zlecenia i dostępność sprawdza funkcja DB (stock_issue).
+ */
+export const issueSchema = z
+  .object({
+    client_request_id: z.uuid({ error: "Brak identyfikatora żądania" }),
+    location_id: z.uuid({ error: "Wybierz lokalizację" }),
+    material_id: z.uuid({ error: "Wybierz materiał" }),
+    quantity: quantitySchema(),
+    production_order_id: z.uuid({ error: "Nieprawidłowe zlecenie" }).nullable().optional(),
+    reason_code: z.enum(ISSUE_REASONS, { error: "Wybierz powód z listy" }).nullable().optional(),
+    reason: optionalText("Opis powodu", MAX_REASON_LENGTH).optional(),
+    note: optionalText("Notatka", MAX_NOTE_LENGTH).optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    const hasOrder = !!v.production_order_id;
+    const hasReason = !!v.reason_code;
+    if (hasOrder === hasReason) {
+      ctx.addIssue({ code: "custom", path: ["production_order_id"], message: "Wybierz zlecenie albo powód wydania" });
+      return;
+    }
+    if (hasOrder && v.reason) {
+      ctx.addIssue({ code: "custom", path: ["reason"], message: "Opis powodu podaje się tylko przy wydaniu bez zlecenia" });
+    }
+    if (v.reason_code === "INNY" && !v.reason) {
+      ctx.addIssue({ code: "custom", path: ["reason"], message: "Opisz powód wydania" });
+    }
+  });
+export type IssueInput = z.infer<typeof issueSchema>;
+
+// ---- przesunięcie -------------------------------------------------------------
+/** POST /api/v1/stock/transfers. Skąd ≠ dokąd; aktywność lokalizacji docelowej i stan sprawdza DB. */
+export const transferSchema = z
+  .object({
+    client_request_id: z.uuid({ error: "Brak identyfikatora żądania" }),
+    material_id: z.uuid({ error: "Wybierz materiał" }),
+    from_location_id: z.uuid({ error: "Wybierz lokalizację źródłową" }),
+    to_location_id: z.uuid({ error: "Wybierz lokalizację docelową" }),
+    quantity: quantitySchema(),
+    note: optionalText("Notatka", MAX_NOTE_LENGTH).optional(),
+  })
+  .strict()
+  .refine((v) => v.from_location_id !== v.to_location_id, {
+    error: "Lokalizacja docelowa musi być inna niż źródłowa",
+    path: ["to_location_id"],
+  });
+export type TransferInput = z.infer<typeof transferSchema>;
+
 const searchParam = z
   .string()
   .trim()
@@ -136,6 +204,7 @@ export const listMovementsQuerySchema = z
     q: searchParam,
     from: dateParam,
     to: dateParam,
+    orderId: entityIdSchema.optional(),
     page: z.coerce.number().int().min(1).max(100_000).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional().default(DEFAULT_PAGE_SIZE),
   })

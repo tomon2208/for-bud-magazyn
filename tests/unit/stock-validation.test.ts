@@ -5,8 +5,11 @@ import {
   endSentence,
   formatQuantity,
   formatQuantityUnit,
+  issueReasonLabel,
+  issueSchema,
   quantitySchema,
   receiptSchema,
+  transferSchema,
   unitAllowsFraction,
 } from "@/lib/validation/stock";
 import { mapStockError } from "@/server/stock";
@@ -153,5 +156,98 @@ describe("formatQuantity", () => {
     expect(formatQuantity(1.5)).toBe("1,5");
     expect(formatQuantity(12)).toBe("12");
     expect(formatQuantity(0.125)).toBe("0,125");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Etap 5: wydanie i przesunięcie
+// ---------------------------------------------------------------------------
+const U1 = "0b8f8a3e-4a4c-4c86-9a43-0f0f7e1d2c3b";
+const U2 = "6f1c1e0a-2b0d-4c3e-9f5a-1b2c3d4e5f60";
+const U3 = "7a2d2f1b-3c1e-4d4f-8a6b-2c3d4e5f6071";
+const U4 = "8b3e3a2c-4d2f-4e5a-9b7c-3d4e5f607182";
+
+describe("issueSchema — zlecenie XOR powód", () => {
+  const base = { client_request_id: U1, location_id: U2, material_id: U3, quantity: "2" };
+  const ok = (v: unknown) => issueSchema.safeParse(v);
+
+  it("na zlecenie: OK; ilość z przecinkiem → liczba", () => {
+    const r = ok({ ...base, quantity: "1,5", production_order_id: U4 });
+    expect(r.success && r.data).toMatchObject({ production_order_id: U4, quantity: 1.5 });
+  });
+
+  it.each(["SERWIS", "USZKODZENIE", "ZUZYCIE_WLASNE", "PROBKA"])("powód %s bez opisu: OK", (code) => {
+    expect(ok({ ...base, reason_code: code }).success).toBe(true);
+  });
+
+  it("INNY z opisem: OK (opis przycięty)", () => {
+    const r = ok({ ...base, reason_code: "INNY", reason: "  zwrot do dostawcy " });
+    expect(r.success && r.data.reason).toBe("zwrot do dostawcy");
+  });
+
+  it.each([
+    ["ani zlecenia, ani powodu", { ...base }, "production_order_id"],
+    ["zlecenie i powód naraz", { ...base, production_order_id: U4, reason_code: "SERWIS" }, "production_order_id"],
+    ["null i null", { ...base, production_order_id: null, reason_code: null }, "production_order_id"],
+    ["INNY bez opisu", { ...base, reason_code: "INNY" }, "reason"],
+    ["INNY z pustym opisem", { ...base, reason_code: "INNY", reason: "   " }, "reason"],
+    ["opis przy zleceniu", { ...base, production_order_id: U4, reason: "x" }, "reason"],
+    ["nieznany powód", { ...base, reason_code: "KRADZIEZ" }, "reason_code"],
+    ["opis > 200", { ...base, reason_code: "INNY", reason: "x".repeat(201) }, "reason"],
+    ["zlecenie nie-uuid", { ...base, production_order_id: "abc" }, "production_order_id"],
+    ["ilość 0", { ...base, reason_code: "SERWIS", quantity: 0 }, "quantity"],
+    ["nieznane pole", { ...base, reason_code: "SERWIS", user_id: U1 }, ""],
+  ])("%s → błąd", (_n, input, field) => {
+    const r = ok(input);
+    expect(r.success).toBe(false);
+    if (!r.success && field) expect(r.error.issues.map((i) => i.path.join("."))).toContain(field);
+  });
+});
+
+describe("transferSchema", () => {
+  const base = { client_request_id: U1, material_id: U3, from_location_id: U2, to_location_id: U4, quantity: "3" };
+  it("OK", () => {
+    const r = transferSchema.safeParse(base);
+    expect(r.success && r.data.quantity).toBe(3);
+  });
+  it("skąd = dokąd → błąd na to_location_id", () => {
+    const r = transferSchema.safeParse({ ...base, to_location_id: U2 });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]).toMatchObject({ path: ["to_location_id"] });
+  });
+  it.each([
+    ["brak dokąd", { ...base, to_location_id: undefined }],
+    ["ilość ujemna", { ...base, quantity: "-1" }],
+    ["nieznane pole", { ...base, location_id: U2 }],
+  ])("%s → błąd", (_n, input) => {
+    expect(transferSchema.safeParse(input).success).toBe(false);
+  });
+});
+
+describe("mapStockError — Etap 5", () => {
+  it.each([
+    [{ code: "P0001", hint: "ISSUE_TARGET" }, 400, "ISSUE_TARGET"],
+    [{ code: "P0001", hint: "REASON_REQUIRED" }, 400, "REASON_REQUIRED"],
+    [{ code: "P0001", hint: "ORDER_NOT_OPEN" }, 409, "ORDER_NOT_OPEN"],
+    [{ code: "P0001", hint: "SAME_LOCATION" }, 400, "SAME_LOCATION"],
+    [{ code: "P0001", hint: "NOT_FOUND", details: "order" }, 404, "NOT_FOUND"],
+  ])("%o → %i %s", (error, status, code) => {
+    expect(mapStockError(error, "test")).toMatchObject({ status, code });
+  });
+
+  it("INSUFFICIENT_STOCK: 409 z dostępną ilością z detail", () => {
+    expect(mapStockError({ code: "P0001", hint: "INSUFFICIENT_STOCK", details: "7.500" }, "t")).toEqual({
+      status: 409,
+      code: "INSUFFICIENT_STOCK",
+      message: "Niewystarczający stan w lokalizacji. Dostępne: 7,5",
+      details: { available: 7.5 },
+    });
+    // Nieczytelny detail → 0 (bez NaN w odpowiedzi).
+    expect(mapStockError({ code: "P0001", hint: "INSUFFICIENT_STOCK", details: null }, "t").details).toEqual({ available: 0 });
+  });
+
+  it("issueReasonLabel", () => {
+    expect(issueReasonLabel("ZUZYCIE_WLASNE")).toBe("Zużycie własne");
+    expect(issueReasonLabel(null)).toBe("");
   });
 });

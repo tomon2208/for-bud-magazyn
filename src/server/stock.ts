@@ -1,7 +1,14 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildIlikeContainsValue } from "@/lib/validation/catalog";
-import type { ListMovementsQuery, ListStockQuery, ReceiptInput } from "@/lib/validation/stock";
+import type {
+  IssueInput,
+  ListMovementsQuery,
+  ListStockQuery,
+  OperationType,
+  ReceiptInput,
+  TransferInput,
+} from "@/lib/validation/stock";
 import type { ServiceError, ServiceResult } from "./users";
 
 // Serwis stocku. Stan zmienia wyłącznie funkcja DB (rpc) wywoływana klientem UŻYTKOWNIKA (auth.uid() = autor
@@ -9,6 +16,10 @@ import type { ServiceError, ServiceResult } from "./users";
 
 type Db = SupabaseClient;
 type DbError = { code?: string; message?: string; hint?: string | null; details?: string | null };
+
+/** Błąd operacji stockowej; `details` — dane dla klienta (np. dostępna ilość przy INSUFFICIENT_STOCK). */
+export type StockError = ServiceError & { details?: { available: number } };
+export type StockResult<T> = { ok: true; data: T } | { ok: false; error: StockError };
 
 const INTERNAL: ServiceError = { status: 500, code: "INTERNAL", message: "Wystąpił błąd serwera. Spróbuj ponownie." };
 
@@ -19,7 +30,7 @@ const HINTS: Record<string, ServiceError> = {
   NOT_INTEGER: {
     status: 400,
     code: "NOT_INTEGER",
-    message: "Ten materiał przyjmuje się w całych jednostkach (bez ułamków)",
+    message: "Ten materiał liczy się w całych jednostkach (bez ułamków)",
   },
   INVALID_QUANTITY: {
     status: 400,
@@ -32,16 +43,25 @@ const HINTS: Record<string, ServiceError> = {
     code: "IDEMPOTENCY_CONFLICT",
     message: "Ten identyfikator żądania został już użyty dla innej operacji. Odśwież ekran i spróbuj ponownie.",
   },
+  ISSUE_TARGET: { status: 400, code: "ISSUE_TARGET", message: "Wybierz zlecenie albo powód wydania (dokładnie jedno)" },
+  REASON_REQUIRED: { status: 400, code: "REASON_REQUIRED", message: "Opisz powód wydania" },
+  ORDER_NOT_OPEN: {
+    status: 409,
+    code: "ORDER_NOT_OPEN",
+    message: "Zlecenie jest zamknięte (zakończone lub anulowane) — nie można na nie wydawać",
+  },
+  SAME_LOCATION: { status: 400, code: "SAME_LOCATION", message: "Lokalizacja docelowa musi być inna niż źródłowa" },
 };
 
 const NOT_FOUND_MESSAGES: Record<string, string> = {
   material: "Nie znaleziono materiału",
   location: "Nie znaleziono lokalizacji",
   supplier: "Nie znaleziono dostawcy",
+  order: "Nie znaleziono zlecenia",
 };
 
 /** Mapowanie błędów funkcji stockowych na błędy API (bez ujawniania szczegółów bazy). */
-export function mapStockError(error: DbError, context: string): ServiceError {
+export function mapStockError(error: DbError, context: string): StockError {
   if (error.code === "42501") return { status: 403, code: "FORBIDDEN", message: "Brak uprawnień" };
   if (error.code === "P0001" && error.hint) {
     if (error.hint === "NOT_FOUND") {
@@ -49,6 +69,17 @@ export function mapStockError(error: DbError, context: string): ServiceError {
         status: 404,
         code: "NOT_FOUND",
         message: NOT_FOUND_MESSAGES[error.details ?? ""] ?? "Nie znaleziono",
+      };
+    }
+    if (error.hint === "INSUFFICIENT_STOCK") {
+      // detail = dostępna ilość w lokalizacji (tekst numeric z funkcji DB).
+      const available = Number(error.details);
+      const safe = Number.isFinite(available) && available >= 0 ? available : 0;
+      return {
+        status: 409,
+        code: "INSUFFICIENT_STOCK",
+        message: `Niewystarczający stan w lokalizacji. Dostępne: ${safe.toLocaleString("pl-PL", { maximumFractionDigits: 3 })}`,
+        details: { available: safe },
       };
     }
     const mapped = HINTS[error.hint];
@@ -91,7 +122,7 @@ type ReceiptRpcResult = {
   idempotent_replay: boolean;
 };
 
-export async function createReceipt(db: Db, input: ReceiptInput): Promise<ServiceResult<ReceiptResultDto>> {
+export async function createReceipt(db: Db, input: ReceiptInput): Promise<StockResult<ReceiptResultDto>> {
   const { data, error } = await db.rpc("stock_receipt", {
     p_client_request_id: input.client_request_id,
     p_location_id: input.location_id,
@@ -112,6 +143,113 @@ export async function createReceipt(db: Db, input: ReceiptInput): Promise<Servic
       locationId: r.location_id,
       quantity: Number(r.quantity),
       newLocationQuantity: Number(r.new_location_quantity),
+      idempotentReplay: r.idempotent_replay === true,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Wydanie
+// ---------------------------------------------------------------------------
+export type IssueResultDto = {
+  operationId: string;
+  movementId: string;
+  materialId: string;
+  locationId: string;
+  quantity: number;
+  productionOrderId: string | null;
+  reasonCode: string | null;
+  remainingLocationQuantity: number;
+  idempotentReplay: boolean;
+};
+
+type IssueRpcResult = {
+  operation_id: string;
+  movement_id: string;
+  material_id: string;
+  location_id: string;
+  quantity: number | string;
+  production_order_id: string | null;
+  reason_code: string | null;
+  remaining_location_quantity: number | string;
+  idempotent_replay: boolean;
+};
+
+export async function createIssue(db: Db, input: IssueInput): Promise<StockResult<IssueResultDto>> {
+  const { data, error } = await db.rpc("stock_issue", {
+    p_client_request_id: input.client_request_id,
+    p_location_id: input.location_id,
+    p_material_id: input.material_id,
+    p_quantity: input.quantity,
+    p_production_order_id: input.production_order_id ?? null,
+    p_reason_code: input.reason_code ?? null,
+    p_reason: input.reason ?? null,
+    p_note: input.note ?? null,
+  });
+  if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createIssue") };
+  const r = data as IssueRpcResult;
+  return {
+    ok: true,
+    data: {
+      operationId: r.operation_id,
+      movementId: r.movement_id,
+      materialId: r.material_id,
+      locationId: r.location_id,
+      quantity: Number(r.quantity),
+      productionOrderId: r.production_order_id,
+      reasonCode: r.reason_code,
+      remainingLocationQuantity: Number(r.remaining_location_quantity),
+      idempotentReplay: r.idempotent_replay === true,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Przesunięcie
+// ---------------------------------------------------------------------------
+export type TransferResultDto = {
+  operationId: string;
+  materialId: string;
+  fromLocationId: string;
+  toLocationId: string;
+  quantity: number;
+  fromLocationQuantity: number;
+  toLocationQuantity: number;
+  idempotentReplay: boolean;
+};
+
+type TransferRpcResult = {
+  operation_id: string;
+  material_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  quantity: number | string;
+  from_location_quantity: number | string;
+  to_location_quantity: number | string;
+  idempotent_replay: boolean;
+};
+
+export async function createTransfer(db: Db, input: TransferInput): Promise<StockResult<TransferResultDto>> {
+  const { data, error } = await db.rpc("stock_transfer", {
+    p_client_request_id: input.client_request_id,
+    p_material_id: input.material_id,
+    p_from_location_id: input.from_location_id,
+    p_to_location_id: input.to_location_id,
+    p_quantity: input.quantity,
+    p_note: input.note ?? null,
+  });
+  if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createTransfer") };
+  const r = data as TransferRpcResult;
+  return {
+    ok: true,
+    data: {
+      operationId: r.operation_id,
+      materialId: r.material_id,
+      fromLocationId: r.from_location_id,
+      toLocationId: r.to_location_id,
+      quantity: Number(r.quantity),
+      fromLocationQuantity: Number(r.from_location_quantity),
+      toLocationQuantity: Number(r.to_location_quantity),
       idempotentReplay: r.idempotent_replay === true,
     },
   };
@@ -195,7 +333,7 @@ export async function listStock(db: Db, q: ListStockQuery): Promise<ServiceResul
 }
 
 // ---------------------------------------------------------------------------
-// Lista ruchów (Przyjęcia; historia w Etapie 6)
+// Lista ruchów (Przyjęcia, Wydania, Przesunięcia; historia w Etapie 6)
 // ---------------------------------------------------------------------------
 export type MovementDto = {
   movementId: string;
@@ -214,6 +352,12 @@ export type MovementDto = {
   documentRef: string | null;
   note: string | null;
   reason: string | null;
+  reasonCode: string | null;
+  productionOrderId: string | null;
+  productionOrderName: string | null;
+  /** Tylko przesunięcia: kody lokalizacji „skąd” i „dokąd”. */
+  fromLocationCode: string | null;
+  toLocationCode: string | null;
 };
 type MovementRow = {
   movement_id: string;
@@ -232,15 +376,23 @@ type MovementRow = {
   document_ref: string | null;
   note: string | null;
   reason: string | null;
+  reason_code?: string | null;
+  production_order_id?: string | null;
+  production_order_name?: string | null;
+  from_location_code?: string | null;
+  to_location_code?: string | null;
 };
 
 export type MovementPage = { items: MovementDto[]; total: number; page: number; pageSize: number };
 
-/** PRODUKCJA dostaje wyłącznie własne ruchy (wymusza funkcja DB). `since` — np. ostatnie 24 h na terminalu. */
+/**
+ * PRODUKCJA dostaje wyłącznie własne ruchy (wymusza funkcja DB). `since` — np. ostatnie 24 h na terminalu;
+ * `collapseTransfers` — przesunięcie jako jeden wiersz (ruch przychodzący z kodami skąd/dokąd).
+ */
 export async function listMovements(
   db: Db,
   q: ListMovementsQuery,
-  opts: { since?: string } = {},
+  opts: { since?: string; collapseTransfers?: boolean } = {},
 ): Promise<ServiceResult<MovementPage>> {
   const { data, error } = await db.rpc("list_stock_movements", {
     p_type: q.type ?? null,
@@ -250,6 +402,8 @@ export async function listMovements(
     p_page: q.page,
     p_page_size: q.pageSize,
     p_since: opts.since ?? null,
+    p_production_order_id: q.orderId ?? null,
+    p_collapse_transfers: opts.collapseTransfers ?? false,
   });
   if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "listMovements") };
   const result = data as { total: number; items: MovementRow[] };
@@ -276,63 +430,90 @@ export async function listMovements(
         documentRef: r.document_ref,
         note: r.note,
         reason: r.reason,
+        reasonCode: r.reason_code ?? null,
+        productionOrderId: r.production_order_id ?? null,
+        productionOrderName: r.production_order_name ?? null,
+        fromLocationCode: r.from_location_code ?? null,
+        toLocationCode: r.to_location_code ?? null,
       })),
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Moje ostatnie przyjęcia (terminal) — RLS: PRODUKCJA widzi tylko własne ruchy; filtr user_id dla każdej roli.
+// Moje ostatnie operacje (terminal) — przyjęcia, wydania, przesunięcia. RLS: PRODUKCJA widzi tylko własne;
+// filtr user_id dla każdej roli (ADMIN na terminalu też widzi tylko swoje).
 // ---------------------------------------------------------------------------
-export type MyReceiptDto = {
-  movementId: string;
+export type MyOperationDto = {
+  operationId: string;
+  type: OperationType;
   createdAt: string;
   quantity: number;
   materialCode: string;
   materialName: string;
   unit: string;
+  /** Przyjęcie: dokąd; wydanie: skąd; przesunięcie: skąd. */
   locationCode: string;
+  /** Tylko przesunięcie: dokąd. */
+  toLocationCode: string | null;
+  orderName: string | null;
+  reasonCode: string | null;
 };
-type MyReceiptRow = {
+type MyOperationRow = {
   id: string;
+  type: OperationType;
   created_at: string;
-  quantity_delta: number | string;
-  material: { code: string; name: string; unit: string } | null;
-  location: { code: string } | null;
+  reason_code: string | null;
+  order: { name: string } | null;
+  movements: {
+    quantity_delta: number | string;
+    material: { code: string; name: string; unit: string } | null;
+    location: { code: string } | null;
+  }[];
 };
 
-export async function listMyRecentReceipts(
+export async function listMyRecentOperations(
   db: Db,
   userId: string,
   opts: { since: string; limit?: number },
-): Promise<ServiceResult<MyReceiptDto[]>> {
+): Promise<ServiceResult<MyOperationDto[]>> {
   const { data, error } = await db
-    .from("stock_movements")
+    .from("stock_operations")
     .select(
-      "id, created_at, quantity_delta, material:materials(code, name, unit), location:locations(code), operation:stock_operations!inner(type)",
+      "id, type, created_at, reason_code, order:production_orders(name), " +
+        "movements:stock_movements(quantity_delta, material:materials(code, name, unit), location:locations(code))",
     )
     .eq("user_id", userId)
-    .eq("operation.type", "RECEIPT")
+    .in("type", ["RECEIPT", "ISSUE", "TRANSFER"])
     .gte("created_at", opts.since)
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 10);
-  if (error) return { ok: false, error: mapStockError(error, "listMyRecentReceipts") };
-  return {
-    ok: true,
-    data: (data as unknown as MyReceiptRow[]).map((r) => ({
-      movementId: r.id,
+  if (error) return { ok: false, error: mapStockError(error, "listMyRecentOperations") };
+  const items: MyOperationDto[] = [];
+  for (const r of data as unknown as MyOperationRow[]) {
+    const out = r.movements.find((m) => Number(m.quantity_delta) < 0);
+    const into = r.movements.find((m) => Number(m.quantity_delta) > 0);
+    const main = r.type === "RECEIPT" ? into : out;
+    if (!main) continue;
+    items.push({
+      operationId: r.id,
+      type: r.type,
       createdAt: r.created_at,
-      quantity: Number(r.quantity_delta),
-      materialCode: r.material?.code ?? "",
-      materialName: r.material?.name ?? "",
-      unit: r.material?.unit ?? "",
-      locationCode: r.location?.code ?? "",
-    })),
-  };
+      quantity: Math.abs(Number(main.quantity_delta)),
+      materialCode: main.material?.code ?? "",
+      materialName: main.material?.name ?? "",
+      unit: main.material?.unit ?? "",
+      locationCode: main.location?.code ?? "",
+      toLocationCode: r.type === "TRANSFER" ? (into?.location?.code ?? null) : null,
+      orderName: r.order?.name ?? null,
+      reasonCode: r.reason_code,
+    });
+  }
+  return { ok: true, data: items };
 }
 
 // ---------------------------------------------------------------------------
-// Ostatnio przyjmowane materiały użytkownika (terminal: szybki wybór)
+// Ostatnio używane materiały użytkownika (terminal: szybki wybór)
 // ---------------------------------------------------------------------------
 export type RecentMaterialDto = {
   id: string;
@@ -352,32 +533,35 @@ type RecentRow = {
     active: boolean;
     default_supplier_id: string | null;
   } | null;
-  operation: { type: string; user_id: string } | null;
 };
 
-/** Do `limit` różnych aktywnych materiałów z ostatnich przyjęć użytkownika (najnowsze pierwsze). */
-export async function listRecentReceiptMaterials(
+/**
+ * Do `limit` różnych materiałów z ostatnich operacji użytkownika danego typu (najnowsze pierwsze).
+ * Przyjęcie: tylko aktywne. Wydanie (`inStockOnly`): tylko materiały, które są teraz na stanie.
+ */
+export async function listRecentMaterials(
   db: Db,
   userId: string,
-  limit = 5,
+  opts: { type: "RECEIPT" | "ISSUE"; limit?: number; inStockOnly?: boolean },
 ): Promise<ServiceResult<RecentMaterialDto[]>> {
+  const limit = opts.limit ?? 5;
   const { data, error } = await db
     .from("stock_movements")
     .select(
       "material:materials(id, code, name, unit, allows_fraction, active, default_supplier_id), operation:stock_operations!inner(type, user_id)",
     )
     .eq("user_id", userId)
-    .eq("operation.type", "RECEIPT")
+    .eq("operation.type", opts.type)
     .order("created_at", { ascending: false })
     .limit(50);
-  if (error) return { ok: false, error: mapStockError(error, "listRecentReceiptMaterials") };
+  if (error) return { ok: false, error: mapStockError(error, "listRecentMaterials") };
   const seen = new Set<string>();
-  const items: RecentMaterialDto[] = [];
+  const candidates: RecentMaterialDto[] = [];
   for (const row of data as unknown as RecentRow[]) {
     const m = row.material;
-    if (!m || !m.active || seen.has(m.id)) continue;
+    if (!m || seen.has(m.id) || (opts.type === "RECEIPT" && !m.active)) continue;
     seen.add(m.id);
-    items.push({
+    candidates.push({
       id: m.id,
       code: m.code,
       name: m.name,
@@ -385,7 +569,19 @@ export async function listRecentReceiptMaterials(
       allowsFraction: m.allows_fraction,
       defaultSupplierId: m.default_supplier_id,
     });
-    if (items.length >= limit) break;
   }
-  return { ok: true, data: items };
+  if (!opts.inStockOnly || candidates.length === 0) return { ok: true, data: candidates.slice(0, limit) };
+
+  const stock = await db
+    .from("stock")
+    .select("material_id")
+    .in(
+      "material_id",
+      candidates.map((c) => c.id),
+    )
+    .gt("quantity", 0);
+  if (stock.error) return { ok: false, error: mapStockError(stock.error, "listRecentMaterials stock") };
+  const inStock = new Set((stock.data as { material_id: string }[]).map((r) => r.material_id));
+  return { ok: true, data: candidates.filter((c) => inStock.has(c.id)).slice(0, limit) };
 }
+

@@ -113,11 +113,20 @@ export default async function MobileLocationPage({ params }: PageProps<"/m/lokal
             <span className="text-xs font-medium text-muted-foreground">nieaktywna</span>
           </button>
         )}
-        <button type="button" disabled aria-disabled="true" className={`${BIG_BUTTON} bg-background opacity-60`}>
+        {/* Wydanie i przesunięcie z nieaktywnej lokalizacji są dozwolone (opróżnienie miejsca) — ADR 010. */}
+        <Link
+          href={`/m/wydanie?lokalizacja=${encodeURIComponent(location.code)}`}
+          className={`${BIG_BUTTON} bg-primary text-primary-foreground active:opacity-80`}
+        >
           WYDANIE
-          <span className="text-xs font-medium text-muted-foreground">wkrótce</span>
-        </button>
+        </Link>
       </div>
+      <Link
+        href={`/m/przesuniecie?z=${encodeURIComponent(location.code)}`}
+        className="flex min-h-14 items-center justify-center rounded-2xl border bg-background text-lg font-semibold active:bg-muted"
+      >
+        Przesuń do innej lokalizacji
+      </Link>
     </div>
   );
 }

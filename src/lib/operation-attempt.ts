@@ -1,4 +1,5 @@
-// Cykl życia jednej próby zapisu operacji magazynowej (czysta logika, testowana jednostkowo).
+// Cykl życia jednej próby zapisu operacji magazynowej — przyjęcia, wydania, przesunięcia (czysta logika,
+// testowana jednostkowo). Jeden mechanizm dla wszystkich typów operacji (desktop i terminal).
 // Zasady (ADR 009, M1):
 // * nowy client_request_id tylko dla NOWYCH danych (status "idle"),
 // * po wyniku nieznanym ("unknown": błąd sieci / 5xx / RETRY) albo wygaśnięciu sesji ("auth") dane są

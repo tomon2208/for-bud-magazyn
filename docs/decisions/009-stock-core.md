@@ -102,3 +102,7 @@ Zastępują odpowiednie fragmenty powyżej.
 
 - `verify_stock()` bez parametru robi pełny skan — dostępne tylko dla ADMIN/service_role; przy obecnej skali akceptowalne.
 - Przepełnienie `numeric(12,3)` przy sumowaniu stanu (> 999 999 999,999) kończy się błędem 22003 mapowanym na `STOCK_LIMIT`; transakcja wycofana — akceptowalne.
+
+## Etap 5
+
+Wydania, przesunięcia, zlecenia, rozszerzona kolejność blokad, zachowanie przy nieaktywnych lokalizacjach/materiałach i miejsce na rezerwacje — ADR 010 (`010-issue-transfer-orders.md`). `production_order_id` ma już FK do `production_orders`.

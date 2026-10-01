@@ -108,7 +108,7 @@ describe("materiał", () => {
 
 describe("parametry listy materiałów", () => {
   it("domyślne wartości", () => {
-    expect(listMaterialsQuerySchema.parse({})).toEqual({ includeInactive: false, page: 1, pageSize: 25 });
+    expect(listMaterialsQuerySchema.parse({})).toEqual({ includeInactive: false, inStock: false, page: 1, pageSize: 25 });
   });
 
   it("pageSize max 100, page ≥ 1, categoryId uuid, includeInactive", () => {

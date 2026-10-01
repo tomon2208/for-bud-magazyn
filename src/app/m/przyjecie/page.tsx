@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requirePageRole } from "@/server/auth";
 import { listSuppliers } from "@/server/catalog";
 import { getLocationByCode } from "@/server/locations";
-import { listRecentReceiptMaterials } from "@/server/stock";
+import { listRecentMaterials } from "@/server/stock";
 import { ReceiptWizard, type WizardLocation } from "./receipt-wizard";
 
 export const metadata: Metadata = { title: "Przyjęcie — FOR-BUD Magazyn" };
@@ -18,7 +18,7 @@ export default async function ReceiptPage({ searchParams }: PageProps<"/m/przyje
   const db = await createSupabaseServerClient();
   const [suppliers, recent, preset] = await Promise.all([
     listSuppliers(db, { includeInactive: false }),
-    listRecentReceiptMaterials(db, user.id),
+    listRecentMaterials(db, user.id, { type: "RECEIPT" }),
     code ? getLocationByCode(db, code) : Promise.resolve(null),
   ]);
 

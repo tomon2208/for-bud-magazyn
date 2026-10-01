@@ -18,6 +18,8 @@ export default async function DesktopLayout({ children }: LayoutProps<"/">) {
           <NavLink href="/dashboard">Dashboard</NavLink>
           <NavLink href="/magazyn">Magazyn</NavLink>
           <NavLink href="/przyjecia">Przyjęcia</NavLink>
+          <NavLink href="/wydania">Wydania</NavLink>
+          <NavLink href="/zlecenia">Zlecenia</NavLink>
           <NavLink href="/materialy">Materiały</NavLink>
           <NavLink href="/dostawcy">Dostawcy</NavLink>
           <NavLink href="/lokalizacje">Lokalizacje</NavLink>

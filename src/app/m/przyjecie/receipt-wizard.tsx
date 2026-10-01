@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { MaterialPicker, type PickedMaterial } from "@/components/material-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { clearPending, savePending, usePendingReceipt, type PendingReceipt } from "@/lib/pending-receipt";
-import { fetchLocationByCode, submitReceipt, type ReceiptResponse } from "@/lib/stock-client";
+import type { PendingOperation } from "@/lib/pending-operation";
+import { fetchLocationByCode, type ReceiptResponse } from "@/lib/stock-client";
 import {
   MAX_DOCUMENT_REF_LENGTH,
   MAX_NOTE_LENGTH,
@@ -14,21 +13,24 @@ import {
   formatQuantity,
   formatQuantityUnit,
 } from "@/lib/validation/stock";
-import { BackLink } from "../back-link";
 import { CodeScanner } from "../code-scanner";
+import { useOperationSubmit } from "../use-operation-submit";
+import {
+  BIG_PRIMARY,
+  BIG_SECONDARY,
+  ContextRow,
+  FinishLink,
+  QuantityInput,
+  ResumeScreen,
+  SubmitErrorAlert,
+  WizardHeader,
+} from "../wizard-parts";
 
 export type WizardLocation = { id: string; code: string; name: string | null };
 type Supplier = { id: string; name: string };
 type Step = "location" | "material" | "quantity" | "summary" | "done";
+type PendingReceipt = PendingOperation<"RECEIPT">;
 
-/**
- * network — wynik nieznany (sieć / 5xx / RETRY) → ponów TEN SAM id; auth — sesja wygasła, operacja niewykonana,
- * ale zachowana do dokończenia po zalogowaniu; domain — serwer odrzucił → popraw dane.
- */
-type SubmitError = { kind: "network" | "auth" | "domain"; message: string };
-
-const BIG_PRIMARY = "h-16 w-full rounded-2xl text-2xl font-bold";
-const BIG_SECONDARY = "h-14 w-full rounded-2xl text-lg font-semibold";
 const SELECT_LG =
   "h-14 w-full rounded-xl border border-input bg-background px-3 text-lg outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
@@ -63,29 +65,9 @@ export function ReceiptWizard({
   const [note, setNote] = useState("");
 
   const [requestId, setRequestId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const lock = useRef(false); // blokada podwójnego tapnięcia (niezależna od cyklu renderowania)
-  const [submitError, setSubmitError] = useState<SubmitError | null>(null);
   const [result, setResult] = useState<ReceiptResponse | null>(null);
-
-  // Niepotwierdzone przyjęcie z sessionStorage. Jeśli nie powstało w tym ekranie (odświeżenie, powrót,
-  // ponowne logowanie) — pokazujemy ekran dokończenia zamiast nowego przyjęcia.
-  const pending = usePendingReceipt(userId);
-  const [ownRequestId, setOwnRequestId] = useState<string | null>(null);
-  const showResume = pending !== null && pending.requestId !== ownRequestId;
-
-  // Po błędzie sieci / wygaśnięciu sesji nie pozwalamy zmieniać danych bez ponowienia albo jawnego porzucenia.
-  const pendingUnknown = submitError?.kind === "network" || submitError?.kind === "auth";
-
-  useEffect(() => {
-    if (!pendingUnknown && !submitting) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = ""; // starsze przeglądarki
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [pendingUnknown, submitting]);
+  // Wspólny mechanizm wysyłki (sessionStorage, ponowienie tym samym id, beforeunload) — ADR 010.
+  const op = useOperationSubmit("RECEIPT", userId);
 
   async function onScanned(code: string) {
     setLookingUp(true);
@@ -131,41 +113,23 @@ export function ReceiptWizard({
     setQuantity(check.value);
     // Nowy identyfikator żądania dla każdego nowego podsumowania (zmienione dane = nowa operacja).
     setRequestId(crypto.randomUUID());
-    setSubmitError(null);
+    op.clearError();
     setStep("summary");
   }
 
-  /** Wysyła (albo ponawia) DOKŁADNIE zapisane żądanie. Zapis w storage trwa do jednoznacznego wyniku. */
   async function send(p: PendingReceipt) {
-    if (lock.current) return;
-    lock.current = true;
-    setSubmitting(true);
-    setSubmitError(null);
-    setOwnRequestId(p.requestId);
-    savePending(p);
-    try {
-      const res = await submitReceipt(p.payload);
-      if (res.kind === "ok") {
-        clearPending();
-        setResult(res.data);
-        setRecent((list) => [p.material, ...list.filter((m) => m.id !== p.material.id)].slice(0, 5));
-        setStep("done");
-      } else if (res.kind === "network" || res.kind === "auth") {
-        setSubmitError({ kind: res.kind, message: res.message });
-      } else {
-        clearPending(); // serwer jednoznacznie odrzucił — nic nie zapisano
-        setSubmitError({ kind: "domain", message: res.message });
-      }
-    } finally {
-      lock.current = false;
-      setSubmitting(false);
-    }
+    const data = await op.send(p);
+    if (!data) return;
+    setResult(data);
+    setRecent((list) => [p.ctx.material, ...list.filter((m) => m.id !== p.ctx.material.id)].slice(0, 5));
+    setStep("done");
   }
 
   function confirm() {
     if (!location || !material || !requestId || quantity === null) return;
     void send({
-      v: 1,
+      v: 2,
+      kind: "RECEIPT",
       userId,
       requestId,
       payload: {
@@ -177,17 +141,15 @@ export function ReceiptWizard({
         document_ref: documentRef.trim() || null,
         note: note.trim() || null,
       },
-      location,
-      material,
-      supplierName: suppliers.find((s) => s.id === supplierId)?.name ?? null,
+      ctx: { location, material, supplierName: suppliers.find((s) => s.id === supplierId)?.name ?? null },
       savedAt: Date.now(),
     });
   }
 
   /** Dokończenie zapisanego żądania: odtworzenie ekranu podsumowania i ponowienie tym samym id. */
   function resume(p: PendingReceipt) {
-    setLocation(p.location);
-    setMaterial(p.material);
+    setLocation(p.ctx.location);
+    setMaterial(p.ctx.material);
     setQuantity(p.payload.quantity);
     setQtyText(formatQuantity(p.payload.quantity));
     setSupplierId(p.payload.supplier_id ?? "");
@@ -200,12 +162,9 @@ export function ReceiptWizard({
   }
 
   function discardPending() {
-    if (!window.confirm("Porzucić niepotwierdzone przyjęcie? Sprawdź w „Moich ostatnich przyjęciach”, czy zostało zapisane.")) {
+    if (!op.discard("Porzucić niepotwierdzone przyjęcie? Sprawdź w „Moich ostatnich operacjach”, czy zostało zapisane.")) {
       return;
     }
-    clearPending();
-    setSubmitError(null);
-    setOwnRequestId(null);
     setRequestId(null);
     setMaterial(null);
     setResult(null);
@@ -216,7 +175,7 @@ export function ReceiptWizard({
     setMaterial(null);
     setResult(null);
     setRequestId(null);
-    setSubmitError(null);
+    op.clearError();
     setStep("material");
   }
 
@@ -227,66 +186,37 @@ export function ReceiptWizard({
     setStep("location");
   }
 
-  if (showResume && pending) {
-    const p = pending;
+  if (op.showResume && op.pending) {
+    const p = op.pending;
     return (
-      <div className="flex flex-1 flex-col gap-4 p-4">
-        <header className="flex items-center justify-between">
-          <span className="inline-flex h-12 items-center px-3 text-lg text-muted-foreground">Przyjęcie</span>
-        </header>
-        <div role="alert" className="rounded-2xl bg-amber-100 p-5 text-amber-950">
-          <p className="text-xl font-bold">Poprzednie przyjęcie nie zostało potwierdzone</p>
-          <p className="mt-1 text-base">
-            Nie wiadomo, czy zapisało się w systemie. Ponów — jeśli już zostało zapisane, nie zostanie zdublowane.
-          </p>
-        </div>
-        <section className="rounded-2xl border bg-background p-5 text-center">
-          <p className="font-mono text-4xl font-extrabold break-all">{formatQuantityUnit(p.payload.quantity, p.material.unit)}</p>
-          <p className="mt-1 text-xl font-semibold break-all">{p.material.code}</p>
-          <p className="text-base text-muted-foreground">{p.material.name}</p>
-          <p className="mt-2 text-lg">
-            do <span className="font-mono text-2xl font-bold">{p.location.code}</span>
-          </p>
-          {p.supplierName && <p className="mt-2 text-base">Dostawca: {p.supplierName}</p>}
-          {p.payload.document_ref && <p className="text-base break-all">Dokument: {p.payload.document_ref}</p>}
-        </section>
-        <Button type="button" className={BIG_PRIMARY} onClick={() => resume(p)}>
-          Ponów (bez ryzyka duplikatu)
-        </Button>
-        <Button type="button" variant="outline" className={BIG_SECONDARY} onClick={discardPending}>
-          Porzuć
-        </Button>
-      </div>
+      <ResumeScreen title="Przyjęcie" what="przyjęcie" onResume={() => resume(p)} onDiscard={discardPending}>
+        <p className="font-mono text-4xl font-extrabold break-all">{formatQuantityUnit(p.payload.quantity, p.ctx.material.unit)}</p>
+        <p className="mt-1 text-xl font-semibold break-all">{p.ctx.material.code}</p>
+        <p className="text-base text-muted-foreground">{p.ctx.material.name}</p>
+        <p className="mt-2 text-lg">
+          do <span className="font-mono text-2xl font-bold">{p.ctx.location.code}</span>
+        </p>
+        {p.ctx.supplierName && <p className="mt-2 text-base">Dostawca: {p.ctx.supplierName}</p>}
+        {p.payload.document_ref && <p className="text-base break-all">Dokument: {p.payload.document_ref}</p>}
+      </ResumeScreen>
     );
   }
 
+  const frozen = step === "summary" && op.locked;
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center justify-between">
-        {pendingUnknown || submitting ? (
-          <span className="inline-flex h-12 items-center px-3 text-lg text-muted-foreground">Dokończ przyjęcie</span>
-        ) : (
-          <BackLink />
-        )}
-        <h1 className="pr-3 text-xl font-bold">
-          Przyjęcie <span className="text-base font-medium text-muted-foreground">· {STEP_NO[step]}/4</span>
-        </h1>
-      </header>
+      <WizardHeader title="Przyjęcie" step={STEP_NO[step]} total={4} locked={op.locked} />
 
       {location && step !== "location" && step !== "done" && (
-        <ContextRow
-          label="Lokalizacja"
-          value={location.code}
-          sub={location.name}
-          onChange={step === "summary" && (pendingUnknown || submitting) ? undefined : changeLocation}
-        />
+        <ContextRow label="Lokalizacja" value={location.code} sub={location.name} onChange={frozen ? undefined : changeLocation} />
       )}
       {material && (step === "quantity" || step === "summary") && (
         <ContextRow
           label="Materiał"
           value={material.code}
           sub={`${material.name} · ${material.unit}`}
-          onChange={step === "summary" && (pendingUnknown || submitting) ? undefined : () => setStep("material")}
+          onChange={frozen ? undefined : () => setStep("material")}
         />
       )}
 
@@ -301,7 +231,7 @@ export function ReceiptWizard({
       {step === "material" && (
         <>
           <h2 className="text-2xl font-bold">Wybierz materiał</h2>
-          <MaterialPicker onSelect={pickMaterial} recent={recent} />
+          <MaterialPicker onSelect={pickMaterial} recent={recent} recentLabel="Ostatnio przyjmowane" />
         </>
       )}
 
@@ -310,28 +240,13 @@ export function ReceiptWizard({
           <label htmlFor="qty" className="text-2xl font-bold">
             Ilość
           </label>
-          <div className="flex items-center gap-3">
-            <Input
-              id="qty"
-              value={qtyText}
-              onChange={(e) => (setQtyText(e.target.value), setQtyError(null))}
-              inputMode={material.allowsFraction ? "decimal" : "numeric"}
-              autoComplete="off"
-              autoFocus
-              enterKeyHint="next"
-              placeholder={material.allowsFraction ? "np. 2,5" : "np. 12"}
-              aria-invalid={!!qtyError}
-              aria-describedby={qtyError ? "qty-error" : undefined}
-              className="h-20 min-w-0 flex-1 rounded-2xl px-4 text-right font-mono text-4xl font-bold"
-            />
-            <span className="shrink-0 text-2xl font-semibold">{material.unit}</span>
-          </div>
-          {!material.allowsFraction && <p className="text-muted-foreground">Tylko liczby całkowite (bez ułamków).</p>}
-          {qtyError && (
-            <p id="qty-error" role="alert" className="rounded-xl bg-destructive/10 p-4 text-base font-medium text-destructive">
-              {qtyError}
-            </p>
-          )}
+          <QuantityInput
+            value={qtyText}
+            onChange={(v) => (setQtyText(v), setQtyError(null))}
+            unit={material.unit}
+            allowsFraction={material.allowsFraction}
+            error={qtyError}
+          />
 
           <details className="rounded-2xl border bg-background p-4">
             <summary className="flex min-h-12 cursor-pointer items-center text-lg font-semibold">
@@ -424,48 +339,27 @@ export function ReceiptWizard({
             )}
           </section>
 
-          {submitError && (
-            <div
-              role="alert"
-              className={
-                submitError.kind === "network"
-                  ? "rounded-xl bg-amber-100 p-4 text-base font-medium text-amber-900"
-                  : "rounded-xl bg-destructive/10 p-4 text-base font-medium text-destructive"
-              }
-            >
-              <p>{submitError.message}</p>
-              {submitError.kind === "network" && (
-                <p className="mt-1 font-normal">
-                  Naciśnij „Spróbuj ponownie” — jeśli operacja już się zapisała, nie zostanie zdublowana.
-                </p>
-              )}
-              {submitError.kind === "auth" && (
-                <p className="mt-1 font-normal">
-                  <Link href="/login" className="underline underline-offset-4">
-                    Zaloguj się
-                  </Link>{" "}
-                  — po zalogowaniu wejdź w PRZYJĘCIE, a system zaproponuje dokończenie tej operacji.
-                </p>
-              )}
-            </div>
-          )}
+          {op.error && <SubmitErrorAlert error={op.error} menuLabel="PRZYJĘCIE" />}
 
-          <Button type="button" className={BIG_PRIMARY} disabled={submitting}
+          <Button
+            type="button"
+            className={BIG_PRIMARY}
+            disabled={op.submitting}
             // Ponowienie: dokładnie zapisane żądanie (ten sam id i payload); pierwsze wysłanie: z bieżących danych.
-            onClick={() => (pendingUnknown && pending ? void send(pending) : confirm())}
+            onClick={() => (op.unresolved && op.pending ? void send(op.pending) : confirm())}
           >
-            {submitting ? "Zapisywanie…" : pendingUnknown ? "Spróbuj ponownie" : "ZATWIERDŹ"}
+            {op.submitting ? "Zapisywanie…" : op.unresolved ? "Spróbuj ponownie" : "ZATWIERDŹ"}
           </Button>
-          {pendingUnknown ? (
-            <Button type="button" variant="outline" className={BIG_SECONDARY} disabled={submitting} onClick={discardPending}>
-              Porzuć — sprawdzę w ostatnich przyjęciach
+          {op.unresolved ? (
+            <Button type="button" variant="outline" className={BIG_SECONDARY} disabled={op.submitting} onClick={discardPending}>
+              Porzuć — sprawdzę w ostatnich operacjach
             </Button>
           ) : (
             <Button
               type="button"
               variant="outline"
               className={BIG_SECONDARY}
-              disabled={submitting}
+              disabled={op.submitting}
               onClick={() => setStep("quantity")}
             >
               Popraw ilość
@@ -477,9 +371,7 @@ export function ReceiptWizard({
       {step === "done" && result && location && material && (
         <div className="flex flex-col gap-4">
           <section role="status" className="rounded-2xl bg-emerald-100 p-5 text-center text-emerald-950">
-            <p className="text-2xl font-bold">
-              Przyjęto {formatQuantityUnit(result.quantity, material.unit)}
-            </p>
+            <p className="text-2xl font-bold">Przyjęto {formatQuantityUnit(result.quantity, material.unit)}</p>
             <p className="mt-1 text-lg break-all">
               {material.code} — {material.name}
             </p>
@@ -496,44 +388,8 @@ export function ReceiptWizard({
           <Button type="button" className={BIG_PRIMARY} onClick={nextMaterial}>
             Kolejny materiał w tej lokalizacji
           </Button>
-          <Link
-            href="/m"
-            className="flex h-14 w-full items-center justify-center rounded-2xl border bg-background text-lg font-semibold active:bg-muted"
-          >
-            Zakończ
-          </Link>
+          <FinishLink />
         </div>
-      )}
-    </div>
-  );
-}
-
-function ContextRow({
-  label,
-  value,
-  sub,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  sub?: string | null;
-  onChange?: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border bg-background px-4 py-2">
-      <div className="min-w-0">
-        <div className="text-sm text-muted-foreground">{label}</div>
-        <div className="font-mono text-xl font-bold break-all">{value}</div>
-        {sub && <div className="truncate text-sm text-muted-foreground">{sub}</div>}
-      </div>
-      {onChange && (
-        <button
-          type="button"
-          onClick={onChange}
-          className="h-12 shrink-0 rounded-xl px-3 text-base font-medium underline underline-offset-4 active:bg-muted"
-        >
-          Zmień
-        </button>
       )}
     </div>
   );

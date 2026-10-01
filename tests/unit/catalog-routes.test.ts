@@ -223,6 +223,7 @@ describe("walidacja i CSRF (ADMIN)", () => {
       q: "abc",
       categoryId: CAT_ID,
       includeInactive: true,
+      inStock: false,
       page: 2,
       pageSize: 50,
     });

@@ -247,10 +247,12 @@ const toMaterial = (r: MaterialRow): MaterialDto => ({
 export type MaterialPage = { items: MaterialDto[]; total: number; page: number; pageSize: number };
 
 export async function listMaterials(db: Db, q: ListMaterialsQuery): Promise<ServiceResult<MaterialPage>> {
+  // inStock: złączenie z wierszami stanu > 0 (!inner — materiał bez takiego wiersza odpada).
   let query = db
     .from("materials")
-    .select(MATERIAL_COLUMNS, { count: "exact" })
+    .select(q.inStock ? `${MATERIAL_COLUMNS}, stock!inner(quantity)` : MATERIAL_COLUMNS, { count: "exact" })
     .order("code", { ascending: true });
+  if (q.inStock) query = query.gt("stock.quantity", 0);
   if (!q.includeInactive) query = query.eq("active", true);
   if (q.categoryId) query = query.eq("category_id", q.categoryId);
   if (q.q) {
@@ -263,7 +265,10 @@ export async function listMaterials(db: Db, q: ListMaterialsQuery): Promise<Serv
     // Strona poza zakresem → PostgREST zwraca 416 (PGRST103): pusta strona zamiast błędu.
     if (error.code === "PGRST103") {
       // Prawdziwe total (te same filtry), żeby UI mogło przejść na ostatnią stronę.
-      let countQuery = db.from("materials").select("id", { count: "exact", head: true });
+      let countQuery = db
+        .from("materials")
+        .select(q.inStock ? "id, stock!inner(quantity)" : "id", { count: "exact", head: true });
+      if (q.inStock) countQuery = countQuery.gt("stock.quantity", 0);
       if (!q.includeInactive) countQuery = countQuery.eq("active", true);
       if (q.categoryId) countQuery = countQuery.eq("category_id", q.categoryId);
       if (q.q) {
