@@ -66,3 +66,5 @@ W `stock_issue` w kroku „5. Dostępność” jest oznaczone miejsce: sprawdzen
 
 - CHECK `stock_operations_reason_code_valid` jest **globalny** (wszystkie typy operacji) — jeśli korekty ADMIN-a dostaną własne kody powodów, trzeba go rozszerzyć albo uzależnić od `type`; CHECK `stock_operations_reason_other` (INNY ⇒ opis) też dotyczy wszystkich typów.
 - **Storno/korekta wydania musi wejść do podsumowania zlecenia** (`order_issue_summary` sumuje dziś tylko operacje `ISSUE` danego zlecenia) — np. korekta ze wskazaniem `production_order_id` uwzględniona w sumie albo osobna kolumna „skorygowano”.
+
+Rozwiązane w Etapie 6 (ADR 011): CHECK kodów powodów jest per typ operacji; storno wydania kopiuje zlecenie i `order_issue_summary` liczy wydania netto (+ kolumna `reversals`).

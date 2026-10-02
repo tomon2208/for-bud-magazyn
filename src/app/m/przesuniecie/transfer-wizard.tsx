@@ -8,6 +8,7 @@ import { fetchLocationByCode, fetchStock, type StockRow, type TransferResponse }
 import { checkQuantity, formatQuantity, formatQuantityUnit } from "@/lib/validation/stock";
 import { CodeScanner } from "../code-scanner";
 import { StockRows } from "../stock-rows";
+import { useConfirmGuard } from "@/lib/confirm-guard";
 import { useOperationSubmit, type SubmitError } from "../use-operation-submit";
 import {
   BIG_PRIMARY,
@@ -50,6 +51,7 @@ export function TransferWizard({
   const [requestId, setRequestId] = useState<string | null>(null);
   const [result, setResult] = useState<TransferResponse | null>(null);
   const op = useOperationSubmit("TRANSFER", userId);
+  const guard = useConfirmGuard();
 
   /** Skan „skąd”: każda istniejąca lokalizacja (także nieaktywna — można ją opróżnić). */
   async function onScannedFrom(code: string) {
@@ -79,6 +81,7 @@ export function TransferWizard({
     setTo({ id: found.data.id, code: found.data.code, name: found.data.name });
     setRequestId(crypto.randomUUID());
     op.clearError();
+    guard.arm();
     setStep("summary");
   }
 
@@ -158,6 +161,7 @@ export function TransferWizard({
     setQtyText(formatQuantity(p.payload.quantity));
     setRequestId(p.requestId);
     setResult(null);
+    guard.arm();
     setStep("summary");
     // Dostępność nie jest zapisana w storage — pobieramy aktualną (potrzebna, gdy trzeba poprawić ilość).
     void fetchStock({ materialId: p.ctx.material.id, locationId: p.ctx.from.id }).then((r) => {
@@ -339,7 +343,7 @@ export function TransferWizard({
             type="button"
             className={BIG_PRIMARY}
             disabled={op.submitting || op.error?.kind === "domain"}
-            onClick={() => (op.unresolved && op.pending ? void send(op.pending) : confirm())}
+            onClick={(e) => guard.allow(e) && (op.unresolved && op.pending ? void send(op.pending) : confirm())}
           >
             {op.submitting ? "Zapisywanie…" : op.unresolved ? "Spróbuj ponownie" : "ZATWIERDŹ"}
           </Button>

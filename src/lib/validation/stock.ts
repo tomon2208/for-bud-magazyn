@@ -37,7 +37,7 @@ export type QuantityCheck = { ok: true; value: number } | { ok: false; message: 
  * (także twarde) jako separator tysięcy ("1 000"). Wymaga > 0, ≤ MAX_QUANTITY, max 3 miejsc po przecinku;
  * gdy allowsFraction === false — liczby całkowitej.
  */
-export function checkQuantity(raw: unknown, allowsFraction = true): QuantityCheck {
+export function checkQuantity(raw: unknown, allowsFraction = true, opts: { allowZero?: boolean } = {}): QuantityCheck {
   let text: string;
   if (typeof raw === "number") {
     if (!Number.isFinite(raw)) return { ok: false, message: "Podaj ilość" };
@@ -53,7 +53,8 @@ export function checkQuantity(raw: unknown, allowsFraction = true): QuantityChec
     return { ok: false, message: "Podaj ilość" };
   }
   if (text === "") return { ok: false, message: "Podaj ilość" };
-  if (/^-\d/.test(text)) return { ok: false, message: "Ilość musi być większa od zera" };
+  const positiveMessage = opts.allowZero ? "Ilość nie może być ujemna" : "Ilość musi być większa od zera";
+  if (/^-\d/.test(text)) return { ok: false, message: positiveMessage };
   const match = /^(\d*)(?:\.(\d+))?$/.exec(text); // także ",5" / ".5" → 0,5
   if (!match || (match[1] === "" && match[2] === undefined)) return { ok: false, message: "Ilość musi być liczbą, np. 12 albo 2,5" };
   const decimals = match[2] ?? "";
@@ -61,7 +62,7 @@ export function checkQuantity(raw: unknown, allowsFraction = true): QuantityChec
     return { ok: false, message: `Ilość może mieć maksymalnie ${MAX_QUANTITY_DECIMALS} miejsca po przecinku` };
   }
   const value = Number(text);
-  if (!(value > 0)) return { ok: false, message: "Ilość musi być większa od zera" };
+  if (opts.allowZero ? !(value >= 0) : !(value > 0)) return { ok: false, message: "Ilość musi być większa od zera" };
   if (value > MAX_QUANTITY) return { ok: false, message: "Ilość może wynosić maksymalnie 1 000 000" };
   if (!allowsFraction && !Number.isInteger(value)) {
     return { ok: false, message: "Ten materiał liczy się w całych jednostkach (bez ułamków)" };
@@ -171,6 +172,88 @@ export const transferSchema = z
   });
 export type TransferInput = z.infer<typeof transferSchema>;
 
+// ---- korekta (ADMIN) ---------------------------------------------------------
+/** Powody korekty (stała lista — CHECK w DB per typ operacji). INNY wymaga opisu. */
+export const ADJUSTMENT_REASONS = [
+  "POMYLKA_PRZYJECIA",
+  "POMYLKA_WYDANIA",
+  "USZKODZENIE",
+  "ZAGINIECIE",
+  "ZNALEZIONE",
+  "STAN_POCZATKOWY",
+  "INNY",
+] as const;
+export type AdjustmentReasonCode = (typeof ADJUSTMENT_REASONS)[number];
+export const ADJUSTMENT_REASON_LABELS: Record<AdjustmentReasonCode, string> = {
+  POMYLKA_PRZYJECIA: "Pomyłka przy przyjęciu",
+  POMYLKA_WYDANIA: "Pomyłka przy wydaniu",
+  USZKODZENIE: "Uszkodzenie / zniszczenie",
+  ZAGINIECIE: "Zaginięcie / kradzież",
+  ZNALEZIONE: "Odnaleziony towar",
+  STAN_POCZATKOWY: "Wprowadzenie stanu początkowego",
+  INNY: "Inny",
+};
+
+/** Etykieta powodu wg typu operacji (wydanie / korekta); nieznany kod → sam kod. */
+export function reasonLabel(type: string, code: string | null | undefined): string {
+  if (!code) return "";
+  if (type === "ADJUSTMENT") {
+    return code in ADJUSTMENT_REASON_LABELS ? ADJUSTMENT_REASON_LABELS[code as AdjustmentReasonCode] : code;
+  }
+  return issueReasonLabel(code);
+}
+
+/** Stan (≥ 0, do 3 miejsc) — faktyczna ilość albo stan widziany przez ADMIN-a. */
+const nonNegativeQuantity = z.union([z.string(), z.number()], { error: "Podaj ilość" }).transform((v, ctx) => {
+  const result = checkQuantity(v, true, { allowZero: true });
+  if (!result.ok) {
+    ctx.addIssue({ code: "custom", message: result.message });
+    return z.NEVER;
+  }
+  return result.value;
+});
+
+/**
+ * POST /api/v1/stock/adjustments — „ustaw stan na X”. `expected_current` = stan, który ADMIN widział (wyścig →
+ * 409 STOCK_CHANGED). Całkowitość (allows_fraction), różnicę 0 i aktywność sprawdza funkcja DB (stock_adjust).
+ */
+export const adjustmentSchema = z
+  .object({
+    client_request_id: z.uuid({ error: "Brak identyfikatora żądania" }),
+    material_id: z.uuid({ error: "Wybierz materiał" }),
+    location_id: z.uuid({ error: "Wybierz lokalizację" }),
+    target_quantity: nonNegativeQuantity,
+    expected_current: nonNegativeQuantity,
+    reason_code: z.enum(ADJUSTMENT_REASONS, { error: "Wybierz powód korekty z listy" }),
+    reason: optionalText("Opis powodu", MAX_REASON_LENGTH).optional(),
+    note: optionalText("Notatka", MAX_NOTE_LENGTH).optional(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.reason_code === "INNY" && !v.reason) {
+      ctx.addIssue({ code: "custom", path: ["reason"], message: "Opisz powód korekty" });
+    }
+  });
+export type AdjustmentInput = z.infer<typeof adjustmentSchema>;
+
+// ---- storno (ADMIN) ----------------------------------------------------------
+export const MIN_REVERSAL_REASON_LENGTH = 3;
+
+/** POST /api/v1/stock/reversals — cofnięcie operacji z obowiązkowym powodem (≥ 3 znaki). */
+export const reversalSchema = z
+  .object({
+    client_request_id: z.uuid({ error: "Brak identyfikatora żądania" }),
+    operation_id: z.uuid({ error: "Nieprawidłowa operacja" }),
+    reason: z
+      .string({ error: "Podaj powód cofnięcia" })
+      .trim()
+      .min(MIN_REVERSAL_REASON_LENGTH, { error: `Powód cofnięcia: co najmniej ${MIN_REVERSAL_REASON_LENGTH} znaki` })
+      .max(MAX_REASON_LENGTH, { error: `Powód może mieć maksymalnie ${MAX_REASON_LENGTH} znaków` }),
+    note: optionalText("Notatka", MAX_NOTE_LENGTH).optional(),
+  })
+  .strict();
+export type ReversalInput = z.infer<typeof reversalSchema>;
+
 const searchParam = z
   .string()
   .trim()
@@ -188,8 +271,18 @@ export const listStockQuerySchema = z.object({
 });
 export type ListStockQuery = Omit<z.infer<typeof listStockQuerySchema>, "q"> & { q?: string };
 
-export const OPERATION_TYPES = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "INVENTORY"] as const;
+export const OPERATION_TYPES = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "INVENTORY", "REVERSAL"] as const;
 export type OperationType = (typeof OPERATION_TYPES)[number];
+export const OPERATION_TYPE_LABELS: Record<OperationType, string> = {
+  RECEIPT: "Przyjęcie",
+  ISSUE: "Wydanie",
+  TRANSFER: "Przesunięcie",
+  ADJUSTMENT: "Korekta",
+  INVENTORY: "Inwentaryzacja",
+  REVERSAL: "Cofnięcie",
+};
+/** Typy do wyboru w filtrze historii (inwentaryzacja — Etap 13). */
+export const HISTORY_TYPES: OperationType[] = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "REVERSAL"];
 
 const dateParam = z
   .string()
@@ -209,7 +302,34 @@ export const listMovementsQuerySchema = z
     pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional().default(DEFAULT_PAGE_SIZE),
   })
   .refine((v) => !v.from || !v.to || v.from <= v.to, { error: "Data „od” nie może być późniejsza niż „do”", path: ["to"] });
-export type ListMovementsQuery = Omit<z.infer<typeof listMovementsQuerySchema>, "q"> & { q?: string };
+export type ListMovementsQuery = Omit<z.infer<typeof listMovementsQuerySchema>, "q"> & {
+  q?: string;
+  materialId?: string;
+  locationId?: string;
+  userId?: string;
+  operationId?: string;
+};
+
+/**
+ * GET /api/v1/stock/movements — historia ruchów: typ, materiał (fraza albo id), lokalizacja, użytkownik,
+ * zlecenie, operacja (z jej stornem), zakres dat, strona. PRODUKCJA — tylko własne (wymusza baza).
+ */
+export const historyQuerySchema = z
+  .object({
+    type: z.enum(OPERATION_TYPES, { error: "Nieprawidłowy typ operacji" }).optional(),
+    q: searchParam,
+    materialId: entityIdSchema.optional(),
+    locationId: entityIdSchema.optional(),
+    userId: entityIdSchema.optional(),
+    orderId: entityIdSchema.optional(),
+    operationId: entityIdSchema.optional(),
+    from: dateParam,
+    to: dateParam,
+    page: z.coerce.number().int().min(1).max(100_000).optional().default(1),
+    pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).optional().default(DEFAULT_PAGE_SIZE),
+  })
+  .refine((v) => !v.from || !v.to || v.from <= v.to, { error: "Data „od” nie może być późniejsza niż „do”", path: ["to"] });
+export type HistoryQuery = Omit<z.infer<typeof historyQuerySchema>, "q"> & { q?: string };
 
 /** Ilość z jednostką, np. "2,5 mb", "3 szt.". */
 export function formatQuantityUnit(value: number, unit: string): string {

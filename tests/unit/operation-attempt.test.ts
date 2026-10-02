@@ -9,7 +9,7 @@ import {
   type Attempt,
 } from "@/lib/operation-attempt";
 import { parsePending, PENDING_MAX_AGE_MS, type PendingOperation } from "@/lib/pending-operation";
-import { submitOperation, type IssuePayload, type ReceiptPayload } from "@/lib/stock-client";
+import { submitAdjustment, submitOperation, submitReversal, type IssuePayload, type ReceiptPayload } from "@/lib/stock-client";
 
 // Wspólny mechanizm próby zapisu operacji magazynowej (przyjęcie / wydanie / przesunięcie): po wyniku nieznanym
 // nie wolno wygenerować nowego id (to dublowało operację), ponowienie wysyła DOKŁADNIE to samo żądanie.
@@ -149,12 +149,22 @@ describe("parsePending (sessionStorage) — przyjęcie, wydanie, przesunięcie",
 
 describe("submitOperation — endpoint i klasyfikacja wyniku", () => {
   afterEach(() => vi.unstubAllGlobals());
+  let fetchMock: ReturnType<typeof vi.fn> | null = null;
   const respond = (status: number, body: unknown) => {
-    const fetchMock = vi.fn(async (url: string) => (void url, new Response(JSON.stringify(body), { status })));
+    fetchMock = vi.fn(async (url: string) => (void url, new Response(JSON.stringify(body), { status })));
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
   };
+  const lastUrl = () => fetchMock?.mock.calls.at(-1)?.[0];
   const body = { ...payload(1), client_request_id: "r" };
+  const adjBody = {
+    client_request_id: "r",
+    material_id: "m",
+    location_id: "l",
+    target_quantity: 3,
+    expected_current: 5,
+    reason_code: "ZAGINIECIE",
+  };
 
   it("201/200 → ok; właściwy endpoint per typ", async () => {
     const f = respond(201, { data: { idempotentReplay: false } });
@@ -187,7 +197,29 @@ describe("submitOperation — endpoint i klasyfikacja wyniku", () => {
       code: "INSUFFICIENT_STOCK",
       message: "Dostępne: 7",
       available: 7,
+      details: { available: 7 },
     });
+  });
+  it("409 STOCK_CHANGED (korekta) → error ze szczegółami; 401 korekty/storna → auth", async () => {
+    respond(409, { error: { code: "STOCK_CHANGED", message: "teraz 4", details: { current: 4 } } });
+    expect(await submitAdjustment(adjBody)).toEqual({
+      kind: "error",
+      status: 409,
+      code: "STOCK_CHANGED",
+      message: "teraz 4",
+      details: { current: 4 },
+    });
+    expect(lastUrl()).toBe("/api/v1/stock/adjustments");
+    respond(401, { error: { code: "UNAUTHENTICATED" } });
+    expect(await submitReversal({ client_request_id: "r", operation_id: "o", reason: "abc" })).toMatchObject({
+      kind: "auth",
+      message: expect.stringContaining("cofnięcie"),
+    });
+    expect(lastUrl()).toBe("/api/v1/stock/reversals");
+  });
+  it("korekta: 500 / błąd sieci → wynik nieznany (ponów tym samym id)", async () => {
+    respond(500, { error: { code: "INTERNAL" } });
+    expect((await submitAdjustment(adjBody)).kind).toBe("network");
   });
   it("401 → auth (zachowaj do dokończenia po zalogowaniu); komunikat wg typu", async () => {
     respond(401, { error: { code: "UNAUTHENTICATED" } });

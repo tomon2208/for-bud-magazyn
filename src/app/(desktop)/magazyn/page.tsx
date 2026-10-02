@@ -15,7 +15,7 @@ function firstParam(value: string | string[] | undefined): string | undefined {
 
 // Stany magazynowe (minimum do weryfikacji przyjęć; pełny dashboard w Etapie 7).
 export default async function StockPage({ searchParams }: PageProps<"/magazyn">) {
-  await requirePageRole("ADMIN", "BIURO");
+  const user = await requirePageRole("ADMIN", "BIURO");
   const raw = await searchParams;
   const parsed = listStockQuerySchema.safeParse({
     q: firstParam(raw.q),
@@ -29,7 +29,7 @@ export default async function StockPage({ searchParams }: PageProps<"/magazyn">)
     <div className="max-w-7xl space-y-6">
       <h1 className="text-2xl font-semibold">Magazyn — stany</h1>
       {stock.ok ? (
-        <StockView page={stock.data} q={query.q ?? ""} />
+        <StockView page={stock.data} q={query.q ?? ""} canAdjust={user.role === "ADMIN"} />
       ) : (
         <p role="alert" className="text-destructive">
           Nie udało się wczytać stanów.

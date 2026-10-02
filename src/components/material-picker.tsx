@@ -11,6 +11,8 @@ export type PickedMaterial = {
   unit: string;
   allowsFraction: boolean;
   defaultSupplierId: string | null;
+  /** Z API materiałów (wyszukiwarka); brak = nieznane. */
+  active?: boolean;
 };
 
 type SearchState =
@@ -32,6 +34,7 @@ export function MaterialPicker({
   size = "lg",
   autoFocus = false,
   inStock = false,
+  includeInactive = false,
   recentLabel = "Ostatnio używane",
 }: {
   onSelect: (m: PickedMaterial) => void;
@@ -39,6 +42,8 @@ export function MaterialPicker({
   size?: "lg" | "md";
   autoFocus?: boolean;
   inStock?: boolean;
+  /** Także nieaktywne materiały (korekta ADMIN-a: zmniejszenie stanu nieaktywnego). */
+  includeInactive?: boolean;
   recentLabel?: string;
 }) {
   const [q, setQ] = useState("");
@@ -52,10 +57,8 @@ export function MaterialPicker({
       setState({ kind: "loading" });
       try {
         const params = new URLSearchParams({ q: term, pageSize: String(PAGE_SIZE) });
-        if (inStock) {
-          params.set("inStock", "true");
-          params.set("includeInactive", "true");
-        }
+        if (inStock) params.set("inStock", "true");
+        if (inStock || includeInactive) params.set("includeInactive", "true");
         const res = await fetch(`/api/v1/materials?${params}`, { signal: controller.signal });
         const json = (await res.json().catch(() => null)) as {
           data?: { items: PickedMaterial[]; total: number };
@@ -74,7 +77,7 @@ export function MaterialPicker({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [term, inStock]);
+  }, [term, inStock, includeInactive]);
 
   const lg = size === "lg";
   const rowClass = lg
@@ -88,7 +91,10 @@ export function MaterialPicker({
             <span className={`font-mono font-bold break-all ${lg ? "text-xl" : "text-sm"}`}>{m.code}</span>
             <span className={`shrink-0 rounded-md bg-muted px-2 font-medium ${lg ? "text-base" : "text-xs"}`}>{m.unit}</span>
           </span>
-          <span className={lg ? "text-base text-muted-foreground" : "text-sm text-muted-foreground"}>{m.name}</span>
+          <span className={lg ? "text-base text-muted-foreground" : "text-sm text-muted-foreground"}>
+            {m.name}
+            {m.active === false && <span className="text-destructive"> (nieaktywny)</span>}
+          </span>
         </button>
       </li>
   );
@@ -135,7 +141,11 @@ export function MaterialPicker({
         <>
           {state.items.length === 0 ? (
             <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">
-              {inStock ? "Brak materiałów na stanie dla tej frazy." : "Brak aktywnych materiałów dla tej frazy."}
+              {inStock
+                ? "Brak materiałów na stanie dla tej frazy."
+                : includeInactive
+                  ? "Brak materiałów dla tej frazy."
+                  : "Brak aktywnych materiałów dla tej frazy."}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">

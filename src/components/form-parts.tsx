@@ -50,13 +50,24 @@ export function NoticeBox({ notice }: { notice: Notice | null }) {
  * Desktopowy komunikat o niepotwierdzonej operacji magazynowej (wynik nieznany albo wygasła sesja):
  * dane zablokowane, jedyne akcje — ponowienie tym samym id albo porzucenie i sprawdzenie listy.
  */
-export function UnresolvedAttemptAlert({ status, what, listName }: { status: string; what: string; listName: string }) {
+export function UnresolvedAttemptAlert({
+  status,
+  what,
+  listName,
+  saved = "zostało zapisane",
+}: {
+  status: string;
+  what: string;
+  listName: string;
+  /** Odmiana: „zostało zapisane” (wydanie) / „została zapisana” (korekta). */
+  saved?: string;
+}) {
   return (
     <div role="alert" className="rounded-md bg-amber-100 p-3 text-sm text-amber-950">
       <p className="font-semibold">
         {status === "auth"
           ? "Sesja wygasła — zaloguj się w nowej karcie, potem ponów (ten sam identyfikator, bez duplikatu)."
-          : `Nie wiadomo, czy ${what} zostało zapisane (brak odpowiedzi serwera).`}
+          : `Nie wiadomo, czy ${what} ${saved} (brak odpowiedzi serwera).`}
       </p>
       <p>
         Dane są zablokowane. Ponów to samo żądanie — jeśli zostało już zapisane, nie zostanie zdublowane — albo porzuć je i

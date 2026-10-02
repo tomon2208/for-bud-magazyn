@@ -14,6 +14,7 @@ import {
   formatQuantityUnit,
 } from "@/lib/validation/stock";
 import { CodeScanner } from "../code-scanner";
+import { useConfirmGuard } from "@/lib/confirm-guard";
 import { useOperationSubmit } from "../use-operation-submit";
 import {
   BIG_PRIMARY,
@@ -68,6 +69,7 @@ export function ReceiptWizard({
   const [result, setResult] = useState<ReceiptResponse | null>(null);
   // Wspólny mechanizm wysyłki (sessionStorage, ponowienie tym samym id, beforeunload) — ADR 010.
   const op = useOperationSubmit("RECEIPT", userId);
+  const guard = useConfirmGuard();
 
   async function onScanned(code: string) {
     setLookingUp(true);
@@ -114,6 +116,7 @@ export function ReceiptWizard({
     // Nowy identyfikator żądania dla każdego nowego podsumowania (zmienione dane = nowa operacja).
     setRequestId(crypto.randomUUID());
     op.clearError();
+    guard.arm();
     setStep("summary");
   }
 
@@ -157,6 +160,7 @@ export function ReceiptWizard({
     setNote(p.payload.note ?? "");
     setRequestId(p.requestId);
     setResult(null);
+    guard.arm();
     setStep("summary");
     void send(p);
   }
@@ -346,7 +350,7 @@ export function ReceiptWizard({
             className={BIG_PRIMARY}
             disabled={op.submitting}
             // Ponowienie: dokładnie zapisane żądanie (ten sam id i payload); pierwsze wysłanie: z bieżących danych.
-            onClick={() => (op.unresolved && op.pending ? void send(op.pending) : confirm())}
+            onClick={(e) => guard.allow(e) && (op.unresolved && op.pending ? void send(op.pending) : confirm())}
           >
             {op.submitting ? "Zapisywanie…" : op.unresolved ? "Spróbuj ponownie" : "ZATWIERDŹ"}
           </Button>

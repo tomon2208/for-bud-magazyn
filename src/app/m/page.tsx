@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LogoutButton } from "@/components/logout-button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { formatQuantityUnit, issueReasonLabel } from "@/lib/validation/stock";
+import { formatQuantityUnit, issueReasonLabel, reasonLabel } from "@/lib/validation/stock";
 import { requirePageRole } from "@/server/auth";
 import { listMyRecentOperations, type MyOperationDto } from "@/server/stock";
 import { PendingOperationsBanner } from "./pending-banner";
@@ -21,11 +21,13 @@ const TYPE_LABEL: Record<string, { text: string; className: string }> = {
   RECEIPT: { text: "Przyjęcie", className: "bg-emerald-100 text-emerald-900" },
   ISSUE: { text: "Wydanie", className: "bg-sky-100 text-sky-900" },
   TRANSFER: { text: "Przesunięcie", className: "bg-violet-100 text-violet-900" },
+  ADJUSTMENT: { text: "Korekta", className: "bg-amber-100 text-amber-900" },
 };
 
 function describe(op: MyOperationDto): string {
   if (op.type === "RECEIPT") return `→ ${op.locationCode}`;
   if (op.type === "TRANSFER") return `${op.locationCode} → ${op.toLocationCode ?? "?"}`;
+  if (op.type === "ADJUSTMENT") return `${op.locationCode} · ${reasonLabel(op.type, op.reasonCode)}`;
   return `z ${op.locationCode} · ${op.orderName ?? issueReasonLabel(op.reasonCode)}`;
 }
 
@@ -98,13 +100,16 @@ export default async function MobileHomePage() {
                       {TYPE_LABEL[r.type]?.text ?? r.type}
                     </span>
                     <span className="font-mono font-bold break-all">{r.materialCode}</span>
+                    {r.reversed && (
+                      <span className="rounded-md bg-rose-100 px-1.5 text-xs font-semibold text-rose-900">cofnięto</span>
+                    )}
                   </div>
                   <div className="text-sm break-words text-muted-foreground">
                     {TIME.format(new Date(r.createdAt))} · {describe(r)}
                   </div>
                 </div>
                 <div className="shrink-0 text-lg font-bold whitespace-nowrap">
-                  {r.type === "ISSUE" ? "−" : ""}
+                  {r.type === "ISSUE" || (r.type === "ADJUSTMENT" && r.delta < 0) ? "−" : r.type === "ADJUSTMENT" ? "+" : ""}
                   {formatQuantityUnit(r.quantity, r.unit)}
                 </div>
               </li>

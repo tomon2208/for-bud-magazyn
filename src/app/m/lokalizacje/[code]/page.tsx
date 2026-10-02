@@ -14,7 +14,8 @@ const BIG_BUTTON =
   "flex min-h-16 flex-col items-center justify-center rounded-2xl border text-xl font-bold";
 
 export default async function MobileLocationPage({ params }: PageProps<"/m/lokalizacje/[code]">) {
-  await requirePageRole("PRODUKCJA", "ADMIN");
+  const user = await requirePageRole("PRODUKCJA", "ADMIN");
+  const canAdjust = user.role === "ADMIN";
   const rawCode = (await params).code;
   // Zepsute kodowanie procentowe → „Nieznany kod lokalizacji” (nie 500).
   const code = decodeCodeParam(rawCode) ?? rawCode;
@@ -90,8 +91,19 @@ export default async function MobileLocationPage({ params }: PageProps<"/m/lokal
                   <div className="font-mono text-lg font-bold break-all">{row.materialCode}</div>
                   <div className="text-sm text-muted-foreground">{row.materialName}</div>
                 </div>
-                <div className="shrink-0 text-right text-xl font-bold whitespace-nowrap">
-                  {formatQuantity(row.quantity)} <span className="text-base font-medium">{row.unit}</span>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="text-right text-xl font-bold whitespace-nowrap">
+                    {formatQuantity(row.quantity)} <span className="text-base font-medium">{row.unit}</span>
+                  </div>
+                  {/* Korekta stanu — wyłącznie ADMIN (API też odrzuca inne role). */}
+                  {canAdjust && (
+                    <Link
+                      href={`/m/korekta?lokalizacja=${encodeURIComponent(location.code)}&material=${row.materialId}`}
+                      className="inline-flex h-12 items-center rounded-xl border px-4 text-base font-semibold active:bg-muted"
+                    >
+                      Koryguj
+                    </Link>
+                  )}
                 </div>
               </li>
             ))}

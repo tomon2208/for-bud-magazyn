@@ -63,7 +63,7 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
               <TableHeader>
                 <TableRow>
                   <TableHead>Materiał</TableHead>
-                  <TableHead className="text-right">Wydano</TableHead>
+                  <TableHead className="text-right">Wydano (netto)</TableHead>
                   <TableHead className="text-right">Liczba wydań</TableHead>
                 </TableRow>
               </TableHeader>
@@ -77,7 +77,10 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
                     <TableCell className="text-right whitespace-nowrap">
                       <span className="font-semibold">{formatQuantity(s.quantity)}</span> {s.unit}
                     </TableCell>
-                    <TableCell className="text-right">{s.issues}</TableCell>
+                    <TableCell className="text-right">
+                      {s.issues}
+                      {s.reversals > 0 && <span className="text-muted-foreground"> (cofnięto: {s.reversals})</span>}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -123,7 +126,14 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
                     <TableCell className="text-right whitespace-nowrap">
                       <span className="font-semibold">{formatQuantity(-m.quantityDelta)}</span> {m.unit}
                     </TableCell>
-                    <TableCell className="font-mono">{m.locationCode}</TableCell>
+                    <TableCell className="font-mono">
+                      {m.locationCode}
+                      {m.reversedAt && (
+                        <Link href={`/historia?operacja=${m.operationId}`} className="ml-2 font-sans text-xs text-rose-800 underline underline-offset-4">
+                          cofnięto
+                        </Link>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

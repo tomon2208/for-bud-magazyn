@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Field, NoticeBox, SELECT_CLASS, UnresolvedAttemptAlert } from "@/components/form-parts";
@@ -143,6 +144,11 @@ export function ReceiptsView({
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
                     <span className="font-semibold">{formatQuantity(m.quantityDelta)}</span> {m.unit}
+                    {m.reversedAt && (
+                      <Link href={`/historia?operacja=${m.operationId}`} className="block text-xs text-rose-800 underline underline-offset-4">
+                        cofnięto
+                      </Link>
+                    )}
                   </TableCell>
                   <TableCell className="font-mono">{m.locationCode}</TableCell>
                   <TableCell>{m.supplierName ?? "—"}</TableCell>

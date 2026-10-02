@@ -180,6 +180,11 @@ export function IssuesView({
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap">
                     <span className="font-semibold">{formatQuantity(Math.abs(m.quantityDelta))}</span> {m.unit}
+                    {m.reversedAt && (
+                      <Link href={`/historia?operacja=${m.operationId}`} className="block text-xs text-rose-800 underline underline-offset-4">
+                        cofnięto
+                      </Link>
+                    )}
                   </TableCell>
                   {tab === "ISSUE" ? (
                     <>

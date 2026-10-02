@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,7 @@ function buildUrl(q: string, page: number) {
   return qs ? `/magazyn?${qs}` : "/magazyn";
 }
 
-export function StockView({ page, q: appliedQ }: { page: StockPage; q: string }) {
+export function StockView({ page, q: appliedQ, canAdjust }: { page: StockPage; q: string; canAdjust: boolean }) {
   const router = useRouter();
   const [q, setQ] = useState(appliedQ);
 
@@ -31,6 +32,16 @@ export function StockView({ page, q: appliedQ }: { page: StockPage; q: string })
 
   return (
     <div className="space-y-4">
+      {canAdjust && (
+        <div className="flex flex-wrap gap-4 text-sm">
+          <Link href="/magazyn/korekta" className="underline underline-offset-4">
+            Korekta stanu (także materiał w nowej lokalizacji)
+          </Link>
+          <Link href="/historia" className="underline underline-offset-4">
+            Historia ruchów i kontrola spójności
+          </Link>
+        </div>
+      )}
       <Input
         type="search"
         aria-label="Szukaj w stanach"
@@ -54,6 +65,7 @@ export function StockView({ page, q: appliedQ }: { page: StockPage; q: string })
                 <TableHead>Nazwa</TableHead>
                 <TableHead>Lokalizacja</TableHead>
                 <TableHead className="text-right">Ilość</TableHead>
+                {canAdjust && <TableHead className="w-24" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -71,6 +83,17 @@ export function StockView({ page, q: appliedQ }: { page: StockPage; q: string })
                   <TableCell className="text-right whitespace-nowrap">
                     <span className="font-semibold">{formatQuantity(r.quantity)}</span> {r.unit}
                   </TableCell>
+                  {canAdjust && (
+                    <TableCell className="text-right">
+                      <Link
+                        href={`/magazyn/korekta?material=${r.materialId}&lokalizacja=${r.locationId}`}
+                        className="text-sm underline underline-offset-4"
+                        aria-label={`Koryguj stan ${r.materialCode} w ${r.locationCode}`}
+                      >
+                        Koryguj
+                      </Link>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

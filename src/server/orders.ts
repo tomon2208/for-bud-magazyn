@@ -114,8 +114,11 @@ export type OrderIssueSummaryDto = {
   materialCode: string;
   materialName: string;
   unit: string;
+  /** Wydano netto (wydania pomniejszone o cofnięte). */
   quantity: number;
   issues: number;
+  /** Liczba cofniętych wydań (storno). */
+  reversals: number;
 };
 type SummaryRow = {
   material_id: string;
@@ -124,10 +127,11 @@ type SummaryRow = {
   unit: string;
   quantity: number | string;
   issues: number;
+  reversals?: number;
 };
 
 /**
- * Podsumowanie wydań na zlecenie: suma ilości per materiał, liczona w SQL (`order_issue_summary`, SECURITY
+ * Podsumowanie wydań na zlecenie: suma ilości per materiał (wydania minus storna wydań — ADR 011), liczona w SQL (`order_issue_summary`, SECURITY
  * INVOKER — RLS: BIURO/ADMIN wszystkie operacje, PRODUKCJA tylko własne).
  */
 export async function getOrderIssueSummary(db: Db, orderId: string): Promise<ServiceResult<OrderIssueSummaryDto[]>> {
@@ -142,6 +146,7 @@ export async function getOrderIssueSummary(db: Db, orderId: string): Promise<Ser
       unit: r.unit,
       quantity: Number(r.quantity),
       issues: Number(r.issues),
+      reversals: Number(r.reversals ?? 0),
     })),
   };
 }

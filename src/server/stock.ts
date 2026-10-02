@@ -2,11 +2,13 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildIlikeContainsValue } from "@/lib/validation/catalog";
 import type {
+  AdjustmentInput,
   IssueInput,
   ListMovementsQuery,
   ListStockQuery,
   OperationType,
   ReceiptInput,
+  ReversalInput,
   TransferInput,
 } from "@/lib/validation/stock";
 import type { ServiceError, ServiceResult } from "./users";
@@ -18,7 +20,7 @@ type Db = SupabaseClient;
 type DbError = { code?: string; message?: string; hint?: string | null; details?: string | null };
 
 /** Błąd operacji stockowej; `details` — dane dla klienta (np. dostępna ilość przy INSUFFICIENT_STOCK). */
-export type StockError = ServiceError & { details?: { available: number } };
+export type StockError = ServiceError & { details?: Record<string, unknown> };
 export type StockResult<T> = { ok: true; data: T } | { ok: false; error: StockError };
 
 const INTERNAL: ServiceError = { status: 500, code: "INTERNAL", message: "Wystąpił błąd serwera. Spróbuj ponownie." };
@@ -44,13 +46,16 @@ const HINTS: Record<string, ServiceError> = {
     message: "Ten identyfikator żądania został już użyty dla innej operacji. Odśwież ekran i spróbuj ponownie.",
   },
   ISSUE_TARGET: { status: 400, code: "ISSUE_TARGET", message: "Wybierz zlecenie albo powód wydania (dokładnie jedno)" },
-  REASON_REQUIRED: { status: 400, code: "REASON_REQUIRED", message: "Opisz powód wydania" },
+  REASON_REQUIRED: { status: 400, code: "REASON_REQUIRED", message: "Opisz powód" },
   ORDER_NOT_OPEN: {
     status: 409,
     code: "ORDER_NOT_OPEN",
     message: "Zlecenie jest zamknięte (zakończone lub anulowane) — nie można na nie wydawać",
   },
   SAME_LOCATION: { status: 400, code: "SAME_LOCATION", message: "Lokalizacja docelowa musi być inna niż źródłowa" },
+  NO_CHANGE: { status: 409, code: "NO_CHANGE", message: "Stan się zgadza — brak korekty" },
+  ALREADY_REVERSED: { status: 409, code: "ALREADY_REVERSED", message: "Ta operacja została już cofnięta" },
+  NOT_REVERSIBLE: { status: 409, code: "NOT_REVERSIBLE", message: "Nie można cofnąć cofnięcia" },
 };
 
 const NOT_FOUND_MESSAGES: Record<string, string> = {
@@ -58,7 +63,43 @@ const NOT_FOUND_MESSAGES: Record<string, string> = {
   location: "Nie znaleziono lokalizacji",
   supplier: "Nie znaleziono dostawcy",
   order: "Nie znaleziono zlecenia",
+  operation: "Nie znaleziono operacji",
 };
+
+const plQty = (n: number) => n.toLocaleString("pl-PL", { maximumFractionDigits: 3 });
+
+/** Nieujemna liczba z tekstu numeric funkcji DB (inaczej 0). */
+function safeQty(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** INSUFFICIENT_STOCK: detail = dostępna ilość (tekst numeric) albo — przy stornie — JSON {available, location_code}. */
+function insufficientStock(details: string | null | undefined): StockError {
+  if (details?.startsWith("{")) {
+    let parsed: { available?: unknown; location_code?: unknown } = {};
+    try {
+      parsed = JSON.parse(details) as typeof parsed;
+    } catch {
+      // nieczytelny detail — bez szczegółów
+    }
+    const available = safeQty(parsed.available);
+    const locationCode = typeof parsed.location_code === "string" ? parsed.location_code : "";
+    return {
+      status: 409,
+      code: "INSUFFICIENT_STOCK",
+      message: `Nie można cofnąć — stan w lokalizacji ${locationCode} spadłby poniżej zera (jest tam: ${plQty(available)})`,
+      details: { available, locationCode },
+    };
+  }
+  const available = safeQty(details);
+  return {
+    status: 409,
+    code: "INSUFFICIENT_STOCK",
+    message: `Niewystarczający stan w lokalizacji. Dostępne: ${plQty(available)}`,
+    details: { available },
+  };
+}
 
 /** Mapowanie błędów funkcji stockowych na błędy API (bez ujawniania szczegółów bazy). */
 export function mapStockError(error: DbError, context: string): StockError {
@@ -71,22 +112,28 @@ export function mapStockError(error: DbError, context: string): StockError {
         message: NOT_FOUND_MESSAGES[error.details ?? ""] ?? "Nie znaleziono",
       };
     }
-    if (error.hint === "INSUFFICIENT_STOCK") {
-      // detail = dostępna ilość w lokalizacji (tekst numeric z funkcji DB).
-      const available = Number(error.details);
-      const safe = Number.isFinite(available) && available >= 0 ? available : 0;
+    if (error.hint === "INSUFFICIENT_STOCK") return insufficientStock(error.details);
+    if (error.hint === "STOCK_CHANGED") {
+      // Korekta: stan inny niż widziany przez ADMIN-a (detail = aktualny stan) — potwierdzenie od nowa.
+      const current = safeQty(error.details);
       return {
         status: 409,
-        code: "INSUFFICIENT_STOCK",
-        message: `Niewystarczający stan w lokalizacji. Dostępne: ${safe.toLocaleString("pl-PL", { maximumFractionDigits: 3 })}`,
-        details: { available: safe },
+        code: "STOCK_CHANGED",
+        message: `Stan zmienił się w międzyczasie — teraz: ${plQty(current)}. Sprawdź i zatwierdź ponownie.`,
+        details: { current },
       };
+    }
+    if (error.hint === "LOCATION_INACTIVE" && error.details) {
+      // Storno: detail = kod lokalizacji, której stan by wzrósł.
+      return { status: 400, code: "LOCATION_INACTIVE", message: `Lokalizacja ${error.details} jest nieaktywna — cofnięcie zwiększyłoby jej stan` };
     }
     const mapped = HINTS[error.hint];
     if (mapped) return mapped;
   }
   // unique(client_request_id) — możliwe tylko poza READ COMMITTED; ponowienie zwróci istniejący wynik.
   if (error.code === "23505") {
+    // UNIQUE(reverses_operation_id) — tylko poza READ COMMITTED (funkcja sprawdza to wcześniej pod blokadą).
+    if (error.message?.includes("reverses_operation_id")) return HINTS.ALREADY_REVERSED;
     return { status: 409, code: "RETRY", message: "Operacja jest w toku. Spróbuj ponownie za chwilę." };
   }
   if (error.code === "22003") {
@@ -256,6 +303,161 @@ export async function createTransfer(db: Db, input: TransferInput): Promise<Stoc
 }
 
 // ---------------------------------------------------------------------------
+// Korekta (ADMIN): „ustaw stan na X”
+// ---------------------------------------------------------------------------
+export type AdjustmentResultDto = {
+  operationId: string;
+  movementId: string;
+  materialId: string;
+  locationId: string;
+  previousQuantity: number;
+  quantityDelta: number;
+  newQuantity: number;
+  idempotentReplay: boolean;
+};
+
+type AdjustmentRpcResult = {
+  operation_id: string;
+  movement_id: string;
+  material_id: string;
+  location_id: string;
+  previous_quantity: number | string;
+  quantity_delta: number | string;
+  new_quantity: number | string;
+  idempotent_replay: boolean;
+};
+
+export async function createAdjustment(db: Db, input: AdjustmentInput): Promise<StockResult<AdjustmentResultDto>> {
+  const { data, error } = await db.rpc("stock_adjust", {
+    p_client_request_id: input.client_request_id,
+    p_material_id: input.material_id,
+    p_location_id: input.location_id,
+    p_target_quantity: input.target_quantity,
+    p_expected_current: input.expected_current,
+    p_reason_code: input.reason_code,
+    p_reason: input.reason ?? null,
+    p_note: input.note ?? null,
+  });
+  if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createAdjustment") };
+  const r = data as AdjustmentRpcResult;
+  return {
+    ok: true,
+    data: {
+      operationId: r.operation_id,
+      movementId: r.movement_id,
+      materialId: r.material_id,
+      locationId: r.location_id,
+      previousQuantity: Number(r.previous_quantity),
+      quantityDelta: Number(r.quantity_delta),
+      newQuantity: Number(r.new_quantity),
+      idempotentReplay: r.idempotent_replay === true,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Storno (ADMIN): cofnięcie operacji ruchami odwrotnymi
+// ---------------------------------------------------------------------------
+export type ReversalResultDto = {
+  operationId: string;
+  reversedOperationId: string;
+  movements: { materialId: string; locationId: string; quantityDelta: number; newQuantity: number }[];
+  idempotentReplay: boolean;
+};
+
+type ReversalRpcResult = {
+  operation_id: string;
+  reversed_operation_id: string;
+  movements: { material_id: string; location_id: string; quantity_delta: number | string; new_quantity: number | string }[];
+  idempotent_replay: boolean;
+};
+
+export async function createReversal(db: Db, input: ReversalInput): Promise<StockResult<ReversalResultDto>> {
+  const { data, error } = await db.rpc("stock_reverse", {
+    p_client_request_id: input.client_request_id,
+    p_operation_id: input.operation_id,
+    p_reason: input.reason,
+    p_note: input.note ?? null,
+  });
+  if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createReversal") };
+  const r = data as ReversalRpcResult;
+  return {
+    ok: true,
+    data: {
+      operationId: r.operation_id,
+      reversedOperationId: r.reversed_operation_id,
+      movements: (r.movements ?? []).map((m) => ({
+        materialId: m.material_id,
+        locationId: m.location_id,
+        quantityDelta: Number(m.quantity_delta),
+        newQuantity: Number(m.new_quantity),
+      })),
+      idempotentReplay: r.idempotent_replay === true,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Spójność stanów (ADMIN): stock vs suma ruchów
+// ---------------------------------------------------------------------------
+export type StockDiscrepancyDto = {
+  materialId: string;
+  materialCode: string | null;
+  locationId: string;
+  locationCode: string | null;
+  stockQuantity: number;
+  ledgerQuantity: number;
+};
+
+/** Pełne sprawdzenie (verify_stock bez zawężenia). Pusta lista = stany zgodne z historią. */
+export async function verifyStock(db: Db): Promise<ServiceResult<{ checkedAt: string; discrepancies: StockDiscrepancyDto[] }>> {
+  const { data, error } = await db.rpc("verify_stock");
+  if (error) return { ok: false, error: mapStockError(error, "verifyStock") };
+  const rows = (data ?? []) as { material_id: string; location_id: string; stock_quantity: number | string; ledger_quantity: number | string }[];
+  const codes = { materials: new Map<string, string>(), locations: new Map<string, string>() };
+  if (rows.length > 0) {
+    const [m, l] = await Promise.all([
+      db.from("materials").select("id, code").in("id", [...new Set(rows.map((r) => r.material_id))]),
+      db.from("locations").select("id, code").in("id", [...new Set(rows.map((r) => r.location_id))]),
+    ]);
+    for (const r of (m.data ?? []) as { id: string; code: string }[]) codes.materials.set(r.id, r.code);
+    for (const r of (l.data ?? []) as { id: string; code: string }[]) codes.locations.set(r.id, r.code);
+  }
+  return {
+    ok: true,
+    data: {
+      checkedAt: new Date().toISOString(),
+      discrepancies: rows.map((r) => ({
+        materialId: r.material_id,
+        materialCode: codes.materials.get(r.material_id) ?? null,
+        locationId: r.location_id,
+        locationCode: codes.locations.get(r.location_id) ?? null,
+        stockQuantity: Number(r.stock_quantity),
+        ledgerQuantity: Number(r.ledger_quantity),
+      })),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Użytkownicy do filtra historii (ADMIN, BIURO): tylko id, imię i nazwisko, aktywność
+// ---------------------------------------------------------------------------
+export type UserNameDto = { id: string; fullName: string; active: boolean };
+
+export async function listUserNames(db: Db): Promise<ServiceResult<UserNameDto[]>> {
+  const { data, error } = await db.rpc("list_user_names");
+  if (error) return { ok: false, error: mapStockError(error, "listUserNames") };
+  return {
+    ok: true,
+    data: ((data ?? []) as { id: string; full_name: string; active: boolean }[]).map((r) => ({
+      id: r.id,
+      fullName: r.full_name,
+      active: r.active,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Stany
 // ---------------------------------------------------------------------------
 export type StockRowDto = {
@@ -355,9 +557,20 @@ export type MovementDto = {
   reasonCode: string | null;
   productionOrderId: string | null;
   productionOrderName: string | null;
-  /** Tylko przesunięcia: kody lokalizacji „skąd” i „dokąd”. */
+  /** Tylko przesunięcia (i ich storna): kody lokalizacji „skąd” i „dokąd”. */
   fromLocationCode: string | null;
   toLocationCode: string | null;
+  /** Storno: operacja cofnięta tym wierszem. */
+  reversesOperationId: string | null;
+  reversesType: string | null;
+  reversesCreatedAt: string | null;
+  /** Oryginał: storno, które go cofnęło (z joinu — operacje są niemutowalne). */
+  reversedByOperationId: string | null;
+  reversedAt: string | null;
+  reversedByUserName: string | null;
+  reversedReason: string | null;
+  /** Czy ADMIN może cofnąć (nie storno i jeszcze nie cofnięta). Brak stanu sprawdza dopiero baza. */
+  reversible: boolean;
 };
 type MovementRow = {
   movement_id: string;
@@ -381,6 +594,14 @@ type MovementRow = {
   production_order_name?: string | null;
   from_location_code?: string | null;
   to_location_code?: string | null;
+  reverses_operation_id?: string | null;
+  reverses_type?: string | null;
+  reverses_created_at?: string | null;
+  reversed_by_operation_id?: string | null;
+  reversed_at?: string | null;
+  reversed_by_user_name?: string | null;
+  reversed_reason?: string | null;
+  reversible?: boolean;
 };
 
 export type MovementPage = { items: MovementDto[]; total: number; page: number; pageSize: number };
@@ -404,6 +625,10 @@ export async function listMovements(
     p_since: opts.since ?? null,
     p_production_order_id: q.orderId ?? null,
     p_collapse_transfers: opts.collapseTransfers ?? false,
+    p_material_id: q.materialId ?? null,
+    p_location_id: q.locationId ?? null,
+    p_user_id: q.userId ?? null,
+    p_operation_id: q.operationId ?? null,
   });
   if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "listMovements") };
   const result = data as { total: number; items: MovementRow[] };
@@ -435,6 +660,14 @@ export async function listMovements(
         productionOrderName: r.production_order_name ?? null,
         fromLocationCode: r.from_location_code ?? null,
         toLocationCode: r.to_location_code ?? null,
+        reversesOperationId: r.reverses_operation_id ?? null,
+        reversesType: r.reverses_type ?? null,
+        reversesCreatedAt: r.reverses_created_at ?? null,
+        reversedByOperationId: r.reversed_by_operation_id ?? null,
+        reversedAt: r.reversed_at ?? null,
+        reversedByUserName: r.reversed_by_user_name ?? null,
+        reversedReason: r.reversed_reason ?? null,
+        reversible: r.reversible === true,
       })),
     },
   };
@@ -454,10 +687,14 @@ export type MyOperationDto = {
   unit: string;
   /** Przyjęcie: dokąd; wydanie: skąd; przesunięcie: skąd. */
   locationCode: string;
+  /** Ruch ze znakiem (korekta: + albo −). */
+  delta: number;
   /** Tylko przesunięcie: dokąd. */
   toLocationCode: string | null;
   orderName: string | null;
   reasonCode: string | null;
+  /** Operacja została cofnięta (storno ADMIN-a). */
+  reversed: boolean;
 };
 type MyOperationRow = {
   id: string;
@@ -484,7 +721,7 @@ export async function listMyRecentOperations(
         "movements:stock_movements(quantity_delta, material:materials(code, name, unit), location:locations(code))",
     )
     .eq("user_id", userId)
-    .in("type", ["RECEIPT", "ISSUE", "TRANSFER"])
+    .in("type", ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT"])
     .gte("created_at", opts.since)
     .order("created_at", { ascending: false })
     .limit(opts.limit ?? 10);
@@ -493,13 +730,15 @@ export async function listMyRecentOperations(
   for (const r of data as unknown as MyOperationRow[]) {
     const out = r.movements.find((m) => Number(m.quantity_delta) < 0);
     const into = r.movements.find((m) => Number(m.quantity_delta) > 0);
-    const main = r.type === "RECEIPT" ? into : out;
+    // Korekta: jeden ruch (w górę albo w dół).
+    const main = r.type === "ADJUSTMENT" ? (r.movements[0] ?? null) : r.type === "RECEIPT" ? into : out;
     if (!main) continue;
     items.push({
       operationId: r.id,
       type: r.type,
       createdAt: r.created_at,
       quantity: Math.abs(Number(main.quantity_delta)),
+      delta: Number(main.quantity_delta),
       materialCode: main.material?.code ?? "",
       materialName: main.material?.name ?? "",
       unit: main.material?.unit ?? "",
@@ -507,7 +746,15 @@ export async function listMyRecentOperations(
       toLocationCode: r.type === "TRANSFER" ? (into?.location?.code ?? null) : null,
       orderName: r.order?.name ?? null,
       reasonCode: r.reason_code,
+      reversed: false,
     });
+  }
+  if (items.length > 0) {
+    // Storno wykonuje ADMIN — PRODUKCJA nie widzi go przez RLS, więc pytamy funkcję DB (tylko własne operacje).
+    const rev = await db.rpc("reversed_operation_ids", { p_ids: items.map((i) => i.operationId) });
+    if (rev.error) return { ok: false, error: mapStockError(rev.error, "listMyRecentOperations reversed") };
+    const reversed = new Set((rev.data ?? []) as string[]);
+    for (const i of items) i.reversed = reversed.has(i.operationId);
   }
   return { ok: true, data: items };
 }

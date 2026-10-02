@@ -85,7 +85,15 @@ export type SubmitResult<T> =
   | { kind: "ok"; data: T }
   | { kind: "network"; message: string }
   | { kind: "auth"; message: string }
-  | { kind: "error"; status: number; code: string; message: string; available?: number };
+  | {
+      kind: "error";
+      status: number;
+      code: string;
+      message: string;
+      available?: number;
+      /** Pozostałe dane błędu domenowego, np. { current } przy STOCK_CHANGED, { locationCode } przy stornie. */
+      details?: Record<string, unknown>;
+    };
 
 export const OPERATION_ENDPOINTS: Record<OperationKind, string> = {
   RECEIPT: "/api/v1/stock/receipts",
@@ -103,9 +111,56 @@ export async function submitOperation<K extends OperationKind>(
   kind: K,
   payload: PayloadOf<K>,
 ): Promise<SubmitResult<ResponseOf<K>>> {
+  return postStockOperation<ResponseOf<K>>(OPERATION_ENDPOINTS[kind], payload, AUTH_MESSAGES[kind]);
+}
+
+// ---- korekta i storno (ADMIN) — ta sama obsługa wyniku nieznanego / 401 / błędu domenowego ----
+export type AdjustmentPayload = {
+  client_request_id: string;
+  material_id: string;
+  location_id: string;
+  target_quantity: number;
+  expected_current: number;
+  reason_code: string;
+  reason?: string | null;
+  note?: string | null;
+};
+export type AdjustmentResponse = {
+  operationId: string;
+  movementId: string;
+  materialId: string;
+  locationId: string;
+  previousQuantity: number;
+  quantityDelta: number;
+  newQuantity: number;
+  idempotentReplay: boolean;
+};
+export type ReversalPayload = { client_request_id: string; operation_id: string; reason: string; note?: string | null };
+export type ReversalResponse = {
+  operationId: string;
+  reversedOperationId: string;
+  movements: { materialId: string; locationId: string; quantityDelta: number; newQuantity: number }[];
+  idempotentReplay: boolean;
+};
+
+export const submitAdjustment = (payload: AdjustmentPayload) =>
+  postStockOperation<AdjustmentResponse>(
+    "/api/v1/stock/adjustments",
+    payload,
+    "Sesja wygasła — zaloguj się; korekta zostanie dokończona.",
+  );
+
+export const submitReversal = (payload: ReversalPayload) =>
+  postStockOperation<ReversalResponse>(
+    "/api/v1/stock/reversals",
+    payload,
+    "Sesja wygasła — zaloguj się; cofnięcie zostanie dokończone.",
+  );
+
+async function postStockOperation<T>(url: string, payload: unknown, authMessage: string): Promise<SubmitResult<T>> {
   let res: Response;
   try {
-    res = await fetch(OPERATION_ENDPOINTS[kind], {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -114,8 +169,8 @@ export async function submitOperation<K extends OperationKind>(
     return { kind: "network", message: "Brak połączenia z serwerem. Operacja mogła nie zostać zapisana." };
   }
   const json = (await res.json().catch(() => null)) as {
-    data?: ResponseOf<K>;
-    error?: { code?: string; message?: string; details?: { available?: unknown } };
+    data?: T;
+    error?: { code?: string; message?: string; details?: Record<string, unknown> };
   } | null;
   if (res.ok && json?.data) return { kind: "ok", data: json.data };
   if (res.status >= 500 || !json) {
@@ -123,7 +178,7 @@ export async function submitOperation<K extends OperationKind>(
   }
   if (res.status === 401) {
     // Operacja nie została wykonana (brak sesji), ale jej nie porzucamy — po zalogowaniu można ją dokończyć.
-    return { kind: "auth", message: AUTH_MESSAGES[kind] };
+    return { kind: "auth", message: authMessage };
   }
   if (res.status === 409 && json.error?.code === "RETRY") {
     // unique(client_request_id) — operacja w toku albo już zapisana: wynik nieznany, ponowienie tym samym id.
@@ -136,6 +191,7 @@ export async function submitOperation<K extends OperationKind>(
     code: json.error?.code ?? "ERROR",
     message: json.error?.message ?? `Błąd (${res.status})`,
     ...(typeof available === "number" ? { available } : {}),
+    ...(json.error?.details ? { details: json.error.details } : {}),
   };
 }
 
@@ -187,4 +243,13 @@ export async function fetchStock(
   } catch {
     return { kind: "error", message: "Brak połączenia z serwerem. Spróbuj ponownie." };
   }
+}
+
+export type CurrentQuantity = { kind: "loading" } | { kind: "ok"; value: number } | { kind: "error"; message: string };
+
+/** Aktualny stan materiału w lokalizacji (korekta) — 0, gdy nie ma wiersza > 0. */
+export async function fetchCurrentQuantity(materialId: string, locationId: string): Promise<CurrentQuantity> {
+  const r = await fetchStock({ materialId, locationId });
+  if (r.kind === "error") return { kind: "error", message: r.message };
+  return { kind: "ok", value: r.items.find((i) => i.locationId === locationId)?.quantity ?? 0 };
 }

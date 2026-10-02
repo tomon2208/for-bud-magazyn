@@ -42,3 +42,8 @@ Uprawnienia muszą być egzekwowane po stronie backendu, nie tylko przez ukrywan
 
 - Zlecenia: tworzą, edytują i zmieniają status BIURO i ADMIN; wszyscy aktywni czytają (PRODUKCJA wybiera otwarte zlecenie przy wydaniu). Zleceń nie usuwamy.
 - Wydania i przesunięcia: PRODUKCJA i ADMIN (terminal; ADMIN także formularze na desktopie). BIURO ogląda listy „Wydania”/„Przesunięcia”.
+
+## Uwagi techniczne (Etap 6, ADR 011)
+
+- Korekta stanu i cofnięcie operacji (storno): wyłącznie ADMIN (route handler i funkcja DB; BIURO/PRODUKCJA → 403/42501). Na terminalu przycisk „Koryguj” widzi tylko ADMIN.
+- Historia ruchów `/historia`: ADMIN i BIURO (wszystkie operacje); PRODUKCJA — tylko własne przez API i „Moje ostatnie operacje” na terminalu. Kontrola spójności stanów — ADMIN.

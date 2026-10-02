@@ -20,6 +20,7 @@ import {
 import { orderSubLabel } from "@/lib/validation/orders";
 import type { OrderDto } from "@/server/orders";
 import { CodeScanner } from "../code-scanner";
+import { useConfirmGuard } from "@/lib/confirm-guard";
 import { useOperationSubmit, type SubmitError } from "../use-operation-submit";
 import {
   BIG_PRIMARY,
@@ -74,6 +75,7 @@ export function IssueWizard({
   const [result, setResult] = useState<IssueResponse | null>(null);
   const [usedOrders, setUsedOrders] = useState(recentOrders);
   const op = useOperationSubmit("ISSUE", userId);
+  const guard = useConfirmGuard();
 
   // Numeracja kroków: na co → materiał → (lokalizacja) → ilość → podsumowanie.
   const total = presetLocation ? 4 : 5;
@@ -142,6 +144,7 @@ export function IssueWizard({
     setQuantity(check.value);
     setRequestId(crypto.randomUUID());
     op.clearError();
+    guard.arm();
     setStep("summary");
   }
 
@@ -199,6 +202,7 @@ export function IssueWizard({
     setQtyText(formatQuantity(p.payload.quantity));
     setRequestId(p.requestId);
     setResult(null);
+    guard.arm();
     setStep("summary");
     // Dostępność nie jest zapisana w storage — pobieramy aktualną (potrzebna, gdy trzeba poprawić ilość).
     void fetchStock({ materialId: p.ctx.material.id, locationId: p.ctx.location.id }).then((r) => {
@@ -444,7 +448,7 @@ export function IssueWizard({
             type="button"
             className={BIG_PRIMARY}
             disabled={op.submitting || op.error?.kind === "domain"}
-            onClick={() => (op.unresolved && op.pending ? void send(op.pending) : confirm())}
+            onClick={(e) => guard.allow(e) && (op.unresolved && op.pending ? void send(op.pending) : confirm())}
           >
             {op.submitting ? "Zapisywanie…" : op.unresolved ? "Spróbuj ponownie" : "ZATWIERDŹ"}
           </Button>
