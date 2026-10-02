@@ -210,6 +210,7 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 **Etap 9–10 — zapotrzebowanie i braki**: ręczne pozycje zapotrzebowania, widok potrzebne/dostępne/zarezerwowane/brakujące.
 
 **Etap 11 — rezerwacje**: `reserve`, `release_reservation`, rozliczanie przy wydaniu, testy race conditions.
+- Decyzje użytkownika (2026-10-02): rezerwację tworzy BIURO/ADMIN przyciskiem „Zarezerwuj” na zleceniu (domyślnie min(pozostało do wydania, wolne); możliwa ręczna ilość per pozycja). Wydanie na inne zlecenie/bez zlecenia bierze tylko wolny towar; ADMIN może świadomie wydać zarezerwowany z powodem (zmniejsza tamtą rezerwację, zostaje w historii). Wydanie na zlecenie zużywa najpierw jego rezerwację. Zakończenie/anulowanie zlecenia zwalnia rezerwację automatycznie; BIURO/ADMIN może zwolnić ręcznie (całość lub część).
 
 **Etap 12 — import LiczOkno**: dopiero po dostarczeniu przykładowych plików; interfejs parsera + mapowanie kodów materiałów.
 
