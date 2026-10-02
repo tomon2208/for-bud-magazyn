@@ -200,6 +200,8 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 - Decyzje użytkownika (2026-10-02): korekta = „ustaw stan na X” (system liczy różnicę i zapisuje ruch ADJUSTMENT z powodem); ADMIN ma „Cofnij ten ruch” w historii — storno (ruch odwrotny powiązany z oryginałem, z powodem; oryginał oznaczony jako cofnięty; nie da się cofnąć dwa razy ani zejść poniżej zera).
 - Zrealizowano (ADR 011): `stock_adjust` (expected_current → `STOCK_CHANGED`, różnica 0 → `NO_CHANGE`, nieaktywne tylko w dół), `stock_reverse` (typ `REVERSAL`, `reverses_operation_id` UNIQUE, zlecenie kopiowane), historia `/historia` z filtrami w SQL, korekta desktop (`/magazyn/korekta`) i terminal (`/m/korekta`), kontrola spójności dla ADMIN-a.
 
+- Odbiór użytkownika (2026-10-02): Etapy 5–6 przetestowane na produkcji (wydania, przesunięcia, zlecenia, korekty, cofanie, historia) — „wszystko działa”.
+
 **Etap 7 — dashboard i stany**: stan per materiał/lokalizacja, zawartość lokalizacji, wyszukiwanie mobilne.
 - Decyzje użytkownika (2026-10-02): opcjonalny „stan minimalny” w kartotece materiału (puste = brak alarmu), dashboard z listą materiałów poniżej minimum; eksport stanów do CSV (Excel, polskie znaki, przecinek dziesiętny, bez nowych bibliotek).
 

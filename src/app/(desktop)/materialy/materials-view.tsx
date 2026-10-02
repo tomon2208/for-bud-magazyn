@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Field, NoticeBox, SELECT_CLASS } from "@/components/form-parts";
@@ -16,7 +17,7 @@ import {
   MAX_SEARCH_LENGTH,
   UNIT_SUGGESTIONS,
 } from "@/lib/validation/catalog";
-import { unitAllowsFraction } from "@/lib/validation/stock";
+import { formatQuantity, unitAllowsFraction } from "@/lib/validation/stock";
 import type { CategoryDto, MaterialDto, MaterialPage, SupplierDto } from "@/server/catalog";
 
 const TEXTAREA_CLASS =
@@ -178,6 +179,7 @@ export function MaterialsView({
                 <TableHead>Kategoria</TableHead>
                 <TableHead>Jednostka</TableHead>
                 <TableHead>Domyślny dostawca</TableHead>
+                <TableHead className="text-right">Minimum</TableHead>
                 <TableHead>Status</TableHead>
                 {canEdit && <TableHead className="text-right">Akcje</TableHead>}
               </TableRow>
@@ -185,7 +187,11 @@ export function MaterialsView({
             <TableBody>
               {page.items.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell className="font-mono">{m.code}</TableCell>
+                  <TableCell className="font-mono">
+                    <Link href={`/materialy/${m.id}`} className="underline underline-offset-4">
+                      {m.code}
+                    </Link>
+                  </TableCell>
                   <TableCell>{m.name}</TableCell>
                   <TableCell>{m.categoryName}</TableCell>
                   <TableCell>
@@ -193,6 +199,9 @@ export function MaterialsView({
                     {m.allowsFraction && <span className="ml-1 text-xs text-muted-foreground">(ułamki)</span>}
                   </TableCell>
                   <TableCell>{m.defaultSupplierName ?? "—"}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap">
+                    {m.minQuantity === null ? "—" : formatQuantity(m.minQuantity)}
+                  </TableCell>
                   <TableCell>
                     {m.active ? <Badge variant="secondary">aktywny</Badge> : <Badge variant="destructive">nieaktywny</Badge>}
                   </TableCell>
@@ -284,6 +293,8 @@ function MaterialForm({
       unit: form.get("unit"),
       allows_fraction: allowsFraction,
       default_supplier_id: supplier === "" ? null : supplier,
+      // Pusty tekst → null (brak alarmu); przecinek dziesiętny akceptuje schemat.
+      min_quantity: form.get("min_quantity"),
       notes: form.get("notes"),
     });
     if (!parsed.success) {
@@ -378,6 +389,18 @@ function MaterialForm({
                 </option>
               ))}
             </select>
+          </Field>
+          <Field id="mat-min" label="Stan minimalny (opcjonalnie)" error={errors.min_quantity}>
+            <Input
+              id="mat-min"
+              name="min_quantity"
+              defaultValue={material?.minQuantity == null ? "" : String(material.minQuantity).replace(".", ",")}
+              inputMode="decimal"
+              maxLength={12}
+              autoComplete="off"
+              placeholder="puste = bez alarmu"
+              aria-invalid={!!errors.min_quantity}
+            />
           </Field>
           <Field id="mat-notes" label="Uwagi" error={errors.notes} className="sm:col-span-2 lg:col-span-4">
             <textarea id="mat-notes" name="notes" defaultValue={material?.notes ?? ""} maxLength={2000} className={TEXTAREA_CLASS} />

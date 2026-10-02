@@ -52,6 +52,13 @@ export function mapDbError(error: DbError, entity: Entity, context: string): Ser
       message: "Nie można zmienić jednostki ani ułamkowości — materiał ma już ruchy magazynowe",
     };
   }
+  if (error.code === "P0001" && error.hint === "MIN_NOT_INTEGER") {
+    return {
+      status: 400,
+      code: "MIN_NOT_INTEGER",
+      message: "Ten materiał liczy się w całych jednostkach — stan minimalny musi być liczbą całkowitą",
+    };
+  }
   if (error.code === "P0001" && error.hint === "HAS_STOCK") {
     return { status: 409, code: "HAS_STOCK", message: "Nie można dezaktywować materiału, który jest na stanie" };
   }
@@ -204,6 +211,8 @@ export type MaterialDto = {
   allowsFraction: boolean;
   defaultSupplierId: string | null;
   defaultSupplierName: string | null;
+  /** Stan minimalny; null = brak alarmu. */
+  minQuantity: number | null;
   active: boolean;
   notes: string | null;
   createdAt: string;
@@ -217,6 +226,7 @@ type MaterialRow = {
   unit: string;
   allows_fraction: boolean;
   default_supplier_id: string | null;
+  min_quantity: number | string | null;
   active: boolean;
   notes: string | null;
   created_at: string;
@@ -225,7 +235,7 @@ type MaterialRow = {
   supplier: { name: string } | null;
 };
 const MATERIAL_COLUMNS =
-  "id, code, name, category_id, unit, allows_fraction, default_supplier_id, active, notes, created_at, updated_at, " +
+  "id, code, name, category_id, unit, allows_fraction, default_supplier_id, min_quantity, active, notes, created_at, updated_at, " +
   "category:material_categories(name), supplier:suppliers(name)";
 
 const toMaterial = (r: MaterialRow): MaterialDto => ({
@@ -238,6 +248,7 @@ const toMaterial = (r: MaterialRow): MaterialDto => ({
   allowsFraction: r.allows_fraction,
   defaultSupplierId: r.default_supplier_id,
   defaultSupplierName: r.supplier?.name ?? null,
+  minQuantity: r.min_quantity === null ? null : Number(r.min_quantity),
   active: r.active,
   notes: r.notes,
   createdAt: r.created_at,

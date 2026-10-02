@@ -227,6 +227,7 @@ describe("GET /stock i /stock/operations — parametry", () => {
     expect(service.listStock).toHaveBeenCalledWith(expect.anything(), {
       locationId: LOC,
       materialId: MAT,
+      belowMin: false,
       page: 1,
       pageSize: 100,
     });

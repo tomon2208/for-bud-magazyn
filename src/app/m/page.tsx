@@ -75,11 +75,9 @@ export default async function MobileHomePage() {
         <Link href="/m/lokalizacje" className={`${TILE_SMALL} bg-background active:bg-muted`}>
           LOKALIZACJE
         </Link>
-        {/* Nieaktywne do czasu wdrożenia (Etap 7). */}
-        <button type="button" disabled aria-disabled="true" className={`${TILE_SMALL} bg-background opacity-60`}>
+        <Link href="/m/szukaj" className={`${TILE_SMALL} col-span-2 bg-background active:bg-muted`}>
           SZUKAJ
-          <span className="text-xs font-medium text-muted-foreground">wkrótce</span>
-        </button>
+        </Link>
       </div>
 
       <section className="rounded-2xl border bg-background p-4">

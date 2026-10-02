@@ -96,6 +96,58 @@ export const updateSupplierSchema = z
 export type UpdateSupplierInput = z.infer<typeof updateSupplierSchema>;
 
 // ---- materiały -------------------------------------------------------------
+export const MAX_MIN_QUANTITY = 1_000_000;
+
+export type MinQuantityCheck = { ok: true; value: number | null } | { ok: false; message: string };
+
+/**
+ * Stan minimalny z formularza/JSON: pusty tekst albo null → null (brak alarmu); liczba ≥ 0, ≤ 1 000 000,
+ * do 3 miejsc po przecinku; przecinek jako separator dziesiętny, spacje ignorowane.
+ */
+export function checkMinQuantity(raw: unknown): MinQuantityCheck {
+  if (raw === null || raw === undefined) return { ok: true, value: null };
+  let text: string;
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return { ok: false, message: "Stan minimalny musi być liczbą" };
+    text = String(raw);
+  } else if (typeof raw === "string") {
+    text = raw.replace(/[\s\u00a0\u202f]/g, "").replace(",", ".").replace(/(\d)\.$/, "$1");
+  } else {
+    return { ok: false, message: "Stan minimalny musi być liczbą" };
+  }
+  if (text === "") return { ok: true, value: null };
+  if (/^-\d/.test(text)) return { ok: false, message: "Stan minimalny nie może być ujemny" };
+  const match = /^(\d*)(?:\.(\d+))?$/.exec(text);
+  if (!match || (match[1] === "" && match[2] === undefined)) {
+    return { ok: false, message: "Stan minimalny musi być liczbą, np. 10 albo 2,5" };
+  }
+  if ((match[2] ?? "").replace(/0+$/, "").length > 3) {
+    return { ok: false, message: "Stan minimalny może mieć maksymalnie 3 miejsca po przecinku" };
+  }
+  const value = Number(text);
+  if (value > MAX_MIN_QUANTITY) return { ok: false, message: "Stan minimalny może wynosić maksymalnie 1 000 000" };
+  return { ok: true, value };
+}
+
+const minQuantitySchema = z
+  .union([z.string(), z.number(), z.null()], { error: "Stan minimalny musi być liczbą" })
+  .transform((v, ctx) => {
+    const result = checkMinQuantity(v);
+    if (!result.ok) {
+      ctx.addIssue({ code: "custom", message: result.message });
+      return z.NEVER;
+    }
+    return result.value;
+  });
+
+const MIN_NOT_INTEGER = {
+  error: "Ten materiał liczy się w całych jednostkach — stan minimalny musi być liczbą całkowitą",
+  path: ["min_quantity"],
+};
+/** Ułamkowy stan minimalny przy jawnym allows_fraction = false (gdy flagę ustala baza — sprawdza trigger). */
+const minIsIntegerWhenNoFraction = (v: { min_quantity?: number | null; allows_fraction?: boolean }) =>
+  v.allows_fraction !== false || v.min_quantity == null || Number.isInteger(v.min_quantity);
+
 export const createMaterialSchema = z
   .object({
     code: materialCodeSchema,
@@ -105,9 +157,11 @@ export const createMaterialSchema = z
     // Brak pola → baza ustala wg jednostki (szt./sztanga/opak. → false).
     allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
+    min_quantity: minQuantitySchema.optional(),
     notes: optionalText("Uwagi", 2000).optional(),
   })
-  .strict();
+  .strict()
+  .refine(minIsIntegerWhenNoFraction, MIN_NOT_INTEGER);
 export type CreateMaterialInput = z.infer<typeof createMaterialSchema>;
 
 export const updateMaterialSchema = z
@@ -118,11 +172,13 @@ export const updateMaterialSchema = z
     unit: unitSchema.optional(),
     allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
+    min_quantity: minQuantitySchema.optional(),
     notes: optionalText("Uwagi", 2000).optional(),
     active: activeSchema.optional(),
   })
   .strict()
-  .refine(nonEmptyPatch, NO_CHANGES);
+  .refine(nonEmptyPatch, NO_CHANGES)
+  .refine(minIsIntegerWhenNoFraction, MIN_NOT_INTEGER);
 export type UpdateMaterialInput = z.infer<typeof updateMaterialSchema>;
 
 // ---- parametry list (query string) -------------------------------------------

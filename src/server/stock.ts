@@ -518,6 +518,8 @@ export async function listStock(db: Db, q: ListStockQuery): Promise<ServiceResul
     .order("location_code", { ascending: true });
   if (q.locationId) query = query.eq("location_id", q.locationId);
   if (q.materialId) query = query.eq("material_id", q.materialId);
+  if (q.categoryId) query = query.eq("category_id", q.categoryId);
+  if (q.belowMin) query = query.eq("below_minimum", true);
   if (q.q) {
     const pattern = buildIlikeContainsValue(q.q);
     query = query.or(`material_code.ilike.${pattern},material_name.ilike.${pattern},location_code.ilike.${pattern}`);

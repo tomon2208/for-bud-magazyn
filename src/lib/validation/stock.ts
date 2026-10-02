@@ -261,15 +261,50 @@ const searchParam = z
   .optional()
   .transform((v) => (v ? v : undefined));
 
-/** GET /api/v1/stock — stany (bez wierszy z zerem). */
+const boolParam = z
+  .enum(["true", "false", "1", "0"])
+  .optional()
+  .transform((v) => v === "true" || v === "1");
+
+/** GET /api/v1/stock — stany (bez wierszy z zerem). Filtry: kategoria, tylko materiały poniżej minimum. */
 export const listStockQuerySchema = z.object({
   locationId: entityIdSchema.optional(),
   materialId: entityIdSchema.optional(),
+  categoryId: entityIdSchema.optional(),
+  belowMin: boolParam,
   q: searchParam,
   page: z.coerce.number().int().min(1).max(100_000).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(500).optional().default(100),
 });
-export type ListStockQuery = Omit<z.infer<typeof listStockQuerySchema>, "q"> & { q?: string };
+export type ListStockQuery = Omit<z.infer<typeof listStockQuerySchema>, "q" | "belowMin"> & {
+  q?: string;
+  belowMin?: boolean;
+};
+
+/** Widok „suma per materiał” (strona Magazyn). */
+export const listTotalsQuerySchema = z.object({
+  categoryId: entityIdSchema.optional(),
+  belowMin: boolParam,
+  q: searchParam,
+  page: z.coerce.number().int().min(1).max(100_000).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(500).optional().default(50),
+});
+export type ListTotalsQuery = Omit<z.infer<typeof listTotalsQuerySchema>, "q" | "belowMin"> & {
+  q?: string;
+  belowMin?: boolean;
+  /** Mobilne SZUKAJ: wszystkie aktywne materiały (także bez stanu), zamiast „stan > 0 albo poniżej minimum”. */
+  allActive?: boolean;
+};
+
+/** GET /api/v1/stock/export — eksport CSV; te same filtry co widok Magazyn. */
+export const EXPORT_VARIANTS = ["location", "material"] as const;
+export const exportStockQuerySchema = z.object({
+  variant: z.enum(EXPORT_VARIANTS, { error: "Wariant eksportu: location albo material" }),
+  categoryId: entityIdSchema.optional(),
+  belowMin: boolParam,
+  q: searchParam,
+});
+export type ExportStockQuery = Omit<z.infer<typeof exportStockQuerySchema>, "q"> & { q?: string };
 
 export const OPERATION_TYPES = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "INVENTORY", "REVERSAL"] as const;
 export type OperationType = (typeof OPERATION_TYPES)[number];
