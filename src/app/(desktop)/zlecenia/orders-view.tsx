@@ -56,10 +56,10 @@ export function StatusBadge({ status }: { status: OrderStatus }) {
 /** Pytanie potwierdzenia przy zamknięciu zlecenia (null — zmiana bez potwierdzenia). */
 export function statusChangeQuestion(name: string, status: OrderStatus): string | null {
   if (status === "DONE") {
-    return `Zakończyć zlecenie „${name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`;
+    return `Zakończyć zlecenie „${name}”? Nie będzie można na nie wydawać, a jego rezerwacje zostaną zwolnione (ponowne otwarcie ich nie przywraca).`;
   }
   if (status === "CANCELLED") {
-    return `Anulować zlecenie „${name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`;
+    return `Anulować zlecenie „${name}”? Nie będzie można na nie wydawać, a jego rezerwacje zostaną zwolnione (ponowne otwarcie ich nie przywraca).`;
   }
   return null;
 }

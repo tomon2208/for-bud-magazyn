@@ -8,7 +8,7 @@ import { MaterialPicker, type PickedMaterial } from "@/components/material-picke
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatDelta, previewAdjustment, quantityDelta } from "@/lib/adjustment";
+import { formatDelta, previewAdjustment, quantityDelta, reservationShortfallAfterAdjust } from "@/lib/adjustment";
 import type { Notice } from "@/lib/api-client";
 import {
   fetchCurrentQuantity,
@@ -18,6 +18,7 @@ import {
   type CurrentQuantity,
 } from "@/lib/stock-client";
 import { useConfirmGuard } from "@/lib/confirm-guard";
+import { useMaterialAvailability } from "@/lib/availability-client";
 import { useOperationAttempt } from "@/lib/use-operation-attempt";
 import { parseScannedCode } from "@/lib/validation/locations";
 import {
@@ -79,6 +80,7 @@ export function AdjustmentForm({
   const currentValue = current.kind === "ok" ? current.value : null;
   const preview = currentValue === null ? null : previewAdjustment(qty, currentValue, unit, material?.allowsFraction ?? true);
   const inactive = material?.active === false || location?.active === false;
+  const avail = useMaterialAvailability(material?.id, reload);
 
   function clearFeedback() {
     setNotice(null);
@@ -358,6 +360,15 @@ export function AdjustmentForm({
               Powód: {reasonLabel}
               {reasonText.trim() && ` — ${reasonText.trim()}`}
             </p>
+            {(() => {
+              const over = reservationShortfallAfterAdjust(avail, quantityDelta(shown.to, shown.from), location?.active !== false);
+              return over > 0 ? (
+                <p role="alert" className="rounded-md bg-amber-50 p-2 text-sm text-amber-950">
+                  Uwaga: po korekcie rezerwacje zleceń przekroczą stan materiału o {formatQuantityUnit(over, unit)} (zarezerwowano{" "}
+                  {formatQuantityUnit(avail?.reservedTotal ?? 0, unit)}). Rezerwacje nie zmienią się same — BIURO zdecyduje, którą zwolnić.
+                </p>
+              ) : null;
+            })()}
             <div className="flex flex-wrap gap-2">
               <Button type="button" onClick={(e) => guard.allow(e) && void confirm()} disabled={att.sending}>
                 {att.sending ? "Zapisywanie…" : att.unresolved ? "Ponów (ten sam id)" : "Zatwierdź korektę"}

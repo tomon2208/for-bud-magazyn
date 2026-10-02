@@ -56,6 +56,12 @@ export default async function MobileMaterialPage({ params, searchParams }: PageP
         <p className="text-5xl font-extrabold">
           {formatQuantity(m.totalQuantity)} <span className="text-2xl font-semibold">{m.unit}</span>
         </p>
+        <p className="mt-2 text-lg">
+          zarezerwowane: <strong>{formatQuantity(m.reservedQuantity)}</strong> · wolne: <strong>{formatQuantity(m.freeQuantity)}</strong>
+        </p>
+        {m.overReserved && (
+          <p className="mt-2 rounded-xl bg-amber-100 p-3 text-base font-semibold text-amber-900">Rezerwacje przekraczają stan</p>
+        )}
         {m.belowMinimum && (
           <p role="status" className="mt-3 rounded-xl bg-rose-100 p-3 text-lg font-semibold text-rose-900">
             Poniżej minimum ({formatQuantity(m.minQuantity ?? 0)} {m.unit}) — brakuje {formatQuantity(m.shortage)} {m.unit}

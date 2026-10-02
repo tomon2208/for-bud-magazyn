@@ -31,6 +31,7 @@ export default async function IssuePage({ searchParams }: PageProps<"/m/wydanie"
   return (
     <IssueWizard
       userId={user.id}
+      isAdmin={user.role === "ADMIN"}
       presetLocation={presetLocation}
       presetMessage={presetMessage}
       recentOrders={recentOrders.ok ? recentOrders.data : []}

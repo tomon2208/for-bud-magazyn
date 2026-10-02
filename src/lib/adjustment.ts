@@ -31,3 +31,17 @@ export function previewAdjustment(raw: string, current: number, unit: string, al
   if (delta === 0) return { kind: "same", target: q.value };
   return { kind: "diff", target: q.value, delta, label: formatDelta(delta, unit) };
 }
+
+/**
+ * Review Etapu 11 (L6): o ile suma rezerwacji przekroczy stan materiału (aktywne lokalizacje) po korekcie o `delta`.
+ * 0 — brak problemu (korekta w górę, brak danych o rezerwacjach). Lokalizacja nieaktywna nie liczy się do stanu.
+ */
+export function reservationShortfallAfterAdjust(
+  avail: { stockActive: number; reservedTotal: number } | null,
+  delta: number,
+  locationActive: boolean,
+): number {
+  if (!avail || !(delta < 0) || avail.reservedTotal <= 0) return 0;
+  const after = avail.stockActive + (locationActive ? delta : 0);
+  return Math.max(0, Math.round((avail.reservedTotal - after) * 1000) / 1000);
+}

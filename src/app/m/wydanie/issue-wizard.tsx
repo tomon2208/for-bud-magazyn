@@ -19,7 +19,9 @@ import {
 } from "@/lib/validation/stock";
 import { ORDER_STATUS_LABELS, orderSubLabel } from "@/lib/validation/orders";
 import type { OrderDto } from "@/server/orders";
-import { suggestIssueQuantity } from "@/lib/to-issue";
+import { issueLimit, suggestIssueQuantity } from "@/lib/to-issue";
+import { MIN_OVERRIDE_REASON_LENGTH } from "@/lib/validation/stock";
+import type { MaterialAvailabilityDto } from "@/server/reservations";
 import type { ToIssueDto } from "@/server/requirements";
 import { CodeScanner } from "../code-scanner";
 import { useConfirmGuard } from "@/lib/confirm-guard";
@@ -43,8 +45,23 @@ function targetLabel(t: IssueTarget): string {
   return t.kind === "order" ? `zlecenie ${t.name}` : `${t.label}${t.text ? ` — ${t.text}` : ""}`;
 }
 
+/** Dostępność materiału z rezerwacjami (Etap 11) dla wybranego celu wydania; null — jeszcze nie wiadomo. */
+type Availability = { materialId: string; orderId: string | null; data: MaterialAvailabilityDto | null; failed: boolean } | null;
+
+async function fetchAvailability(materialId: string, orderId: string | null): Promise<MaterialAvailabilityDto | null> {
+  try {
+    const params = new URLSearchParams({ materialId, ...(orderId ? { orderId } : {}) });
+    const res = await fetch(`/api/v1/stock/availability?${params}`);
+    const json = (await res.json().catch(() => null)) as { data?: MaterialAvailabilityDto } | null;
+    return res.ok && json?.data ? json.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export function IssueWizard({
   userId,
+  isAdmin = false,
   presetLocation,
   presetMessage,
   recentOrders,
@@ -53,6 +70,7 @@ export function IssueWizard({
   recentMaterials,
 }: {
   userId: string;
+  isAdmin?: boolean;
   presetLocation: PendingLocation | null;
   presetMessage: string | null;
   recentOrders: OrderDto[];
@@ -72,6 +90,10 @@ export function IssueWizard({
   const [qtyText, setQtyText] = useState("");
   const [qtyError, setQtyError] = useState<string | null>(null);
   const [quantity, setQuantity] = useState<number | null>(null);
+  // Etap 11: wolne / rezerwacja zlecenia; wydanie ADMIN-a mimo rezerwacji (z powodem).
+  const [avail, setAvail] = useState<Availability>(null);
+  const [overrideMode, setOverrideMode] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
 
   // „Do wydania na to zlecenie” (zapotrzebowanie: pozostało > 0) — ładowane przy kroku wyboru materiału.
   const toIssue = useToIssue(target?.kind === "order" ? target.id : null, step === "material");
@@ -114,6 +136,20 @@ export function IssueWizard({
     setStep("material");
   }
 
+  function loadAvailability(materialId: string, t: IssueTarget | null) {
+    const orderId = t?.kind === "order" ? t.id : null;
+    setAvail(null);
+    void fetchAvailability(materialId, orderId).then((data) => {
+      setAvail({ materialId, orderId, data, failed: data === null });
+    });
+  }
+  // Aktualne tylko dla bieżącego materiału i celu.
+  const availForCurrent =
+    avail && material && avail.materialId === material.id && avail.orderId === (target?.kind === "order" ? target.id : null)
+      ? avail
+      : null;
+  const currentAvail = availForCurrent?.data ?? null;
+
   /** Materiał z wyszukiwarki (bez ustalonej lokalizacji) → krok wyboru lokalizacji. */
   function pickMaterial(m: PickedMaterial) {
     setMaterial(m);
@@ -133,6 +169,8 @@ export function IssueWizard({
     });
     setLocation({ id: row.locationId, code: row.locationCode, name: row.locationName });
     setAvailable(row.quantity);
+    setOverrideMode(false);
+    loadAvailability(row.materialId, target);
     // Materiał z zapotrzebowania zlecenia: podpowiedź ilości = min(pozostało, dostępne w tej lokalizacji).
     // Tylko ze świeżych danych (po wydaniu stary wynik jest unieważniany do czasu nowej odpowiedzi).
     const suggested = suggestIssueQuantity(toIssue, row.materialId, row.quantity);
@@ -166,15 +204,34 @@ export function IssueWizard({
     if (!material) return;
     const check = checkQuantity(qtyText, material.allowsFraction);
     if (!check.ok) return setQtyError(check.message);
-    // Blokada po stronie klienta — źródłem prawdy jest serwer (INSUFFICIENT_STOCK).
+    // Blokada po stronie klienta — źródłem prawdy jest serwer (INSUFFICIENT_STOCK / RESERVED_STOCK).
     if (check.value > available) {
       return setQtyError(`Za dużo — dostępne tylko ${formatQuantityUnit(available, material.unit)}`);
     }
+    const limit = issueLimit(available, currentAvail ? currentAvail.availableForIssue : null);
+    const reservedBlock = check.value > limit;
+    if (reservedBlock && !isAdmin) {
+      return setQtyError(
+        `Za dużo — można wydać ${formatQuantityUnit(limit, material.unit)} (reszta jest zarezerwowana dla innych zleceń)`,
+      );
+    }
+    // ADMIN: świadome wydanie mimo rezerwacji — podsumowanie wymaga powodu.
+    setOverrideMode(reservedBlock);
+    setOverrideReason("");
     setQuantity(check.value);
     setRequestId(crypto.randomUUID());
     op.clearError();
     guard.arm();
     setStep("summary");
+  }
+
+  /** RESERVED_STOCK (ADMIN): przejście w tryb „wydaj mimo rezerwacji” — nowy identyfikator, wymagany powód. */
+  function startOverride() {
+    op.clearError();
+    setOverrideMode(true);
+    setOverrideReason("");
+    setRequestId(crypto.randomUUID());
+    guard.arm();
   }
 
   /** INSUFFICIENT_STOCK: od razu aktualna dostępność z serwera i komunikat z jednostką. */
@@ -217,6 +274,7 @@ export function IssueWizard({
         reason_code: target.kind === "reason" ? target.code : null,
         reason: target.kind === "reason" ? target.text : null,
         note: null,
+        ...(overrideMode ? { override_reservations: true, override_reason: overrideReason.trim() } : {}),
       },
       ctx: { location, material, target },
       savedAt: Date.now(),
@@ -231,6 +289,9 @@ export function IssueWizard({
     setQtyText(formatQuantity(p.payload.quantity));
     setRequestId(p.requestId);
     setResult(null);
+    setOverrideMode(p.payload.override_reservations === true);
+    setOverrideReason(p.payload.override_reason ?? "");
+    loadAvailability(p.ctx.material.id, p.ctx.target);
     guard.arm();
     setStep("summary");
     // Dostępność nie jest zapisana w storage — pobieramy aktualną (potrzebna, gdy trzeba poprawić ilość).
@@ -270,6 +331,8 @@ export function IssueWizard({
       return;
     }
     if (err?.code === "INSUFFICIENT_STOCK" && err.available !== undefined) setAvailable(err.available);
+    if (material) loadAvailability(material.id, target);
+    setOverrideMode(false);
     setStep("quantity");
   }
 
@@ -281,6 +344,7 @@ export function IssueWizard({
         : "Popraw ilość";
 
   function nextMaterial() {
+    setOverrideMode(false);
     setMaterial(null);
     setLocation(presetLocation);
     setResult(null);
@@ -290,6 +354,7 @@ export function IssueWizard({
   }
 
   function changeTarget() {
+    setOverrideMode(false);
     setTarget(null);
     setReasonCode(null);
     setStep("target");
@@ -306,6 +371,9 @@ export function IssueWizard({
           z <span className="font-mono text-2xl font-bold">{p.ctx.location.code}</span>
         </p>
         <p className="mt-2 text-lg break-words">na: {targetLabel(p.ctx.target)}</p>
+        {p.payload.override_reservations && (
+          <p className="mt-2 text-base font-semibold text-amber-900">Mimo rezerwacji — powód: {p.payload.override_reason}</p>
+        )}
         {p.ctx.target.kind === "order" && p.ctx.target.sub && (
           <p className="text-sm break-words text-muted-foreground">{p.ctx.target.sub}</p>
         )}
@@ -438,8 +506,15 @@ export function IssueWizard({
       {step === "quantity" && material && location && (
         <form onSubmit={goSummary} noValidate className="flex flex-col gap-4">
           <label htmlFor="qty" className="text-2xl font-bold">
-            Ilość <span className="text-lg font-medium text-muted-foreground">(dostępne: {formatQuantityUnit(available, material.unit)})</span>
+            Ilość <span className="text-lg font-medium text-muted-foreground">(w lokalizacji: {formatQuantityUnit(available, material.unit)})</span>
           </label>
+          <ReservationInfo
+            avail={currentAvail}
+            failed={availForCurrent?.failed === true}
+            onRetry={() => loadAvailability(material.id, target)}
+            unit={material.unit}
+            forOrder={target?.kind === "order"}
+          />
           <QuantityInput
             value={qtyText}
             onChange={(v) => (setQtyText(v), setQtyError(null))}
@@ -474,12 +549,43 @@ export function IssueWizard({
             )}
           </section>
 
+          {overrideMode && (
+            <section className="flex flex-col gap-2 rounded-2xl bg-amber-100 p-4 text-amber-950">
+              <p className="text-lg font-bold">Wydanie mimo rezerwacji (ADMIN)</p>
+              <p className="text-base">
+                Część towaru jest zarezerwowana dla innych zleceń. Zatwierdzenie zmniejszy ich rezerwacje (od najnowszej) i
+                zostanie zapisane w historii z powodem.
+              </p>
+              <label htmlFor="override-reason" className="text-base font-semibold">
+                Powód (wymagany)
+              </label>
+              <textarea
+                id="override-reason"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                maxLength={MAX_REASON_LENGTH}
+                rows={2}
+                disabled={frozen || op.submitting}
+                className="w-full rounded-xl border border-input bg-background px-4 py-3 text-lg outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              />
+            </section>
+          )}
+
           {op.error && <SubmitErrorAlert error={op.error} menuLabel="WYDANIE" />}
+          {op.error?.code === "RESERVED_STOCK" && isAdmin && !overrideMode && (
+            <Button type="button" variant="outline" className={`${BIG_SECONDARY} border-amber-500 text-amber-900`} onClick={startOverride}>
+              Wydaj mimo rezerwacji…
+            </Button>
+          )}
 
           <Button
             type="button"
             className={BIG_PRIMARY}
-            disabled={op.submitting || op.error?.kind === "domain"}
+            disabled={
+              op.submitting ||
+              op.error?.kind === "domain" ||
+              (overrideMode && !op.unresolved && overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH)
+            }
             onClick={(e) => guard.allow(e) && (op.unresolved && op.pending ? void send(op.pending) : confirm())}
           >
             {op.submitting ? "Zapisywanie…" : op.unresolved ? "Spróbuj ponownie" : "ZATWIERDŹ"}
@@ -511,6 +617,17 @@ export function IssueWizard({
               Zostało w lokalizacji:{" "}
               <span className="font-bold">{formatQuantityUnit(result.remainingLocationQuantity, material.unit)}</span>
             </p>
+            {(result.reservationConsumed ?? 0) > 0 && (
+              <p className="mt-2 text-base">
+                Z rezerwacji zlecenia: {formatQuantityUnit(result.reservationConsumed ?? 0, material.unit)}
+              </p>
+            )}
+            {(result.reservationsOverridden ?? []).length > 0 && (
+              <p className="mt-2 text-base font-semibold">
+                Zmniejszono rezerwacje innych zleceń o{" "}
+                {formatQuantityUnit((result.reservationsOverridden ?? []).reduce((sum, o) => sum + o.quantity, 0), material.unit)}
+              </p>
+            )}
             {result.idempotentReplay && (
               <p className="mt-2 text-base">Ta operacja była już zapisana — nie została zdublowana.</p>
             )}
@@ -759,7 +876,10 @@ function ToIssueList({ state, message, onSelect }: { state: ToIssueState; messag
                 <span className="shrink-0 text-lg font-bold">{formatQuantityUnit(i.remaining, i.unit)}</span>
               </span>
               <span className="text-base text-muted-foreground">{i.materialName}</span>
-              {i.available <= 0 && <span className="text-sm font-semibold text-destructive">brak na stanie</span>}
+              {i.reserved > 0 && (
+                <span className="text-sm text-emerald-800">zarezerwowane dla zlecenia: {formatQuantityUnit(i.reserved, i.unit)}</span>
+              )}
+              {i.available <= 0 && <span className="text-sm font-semibold text-destructive">brak wolnego towaru</span>}
             </button>
           </li>
         ))}
@@ -771,5 +891,49 @@ function ToIssueList({ state, message, onSelect }: { state: ToIssueState; messag
       )}
       <p className="text-sm text-muted-foreground">Pozostałe materiały wyszukasz poniżej.</p>
     </section>
+  );
+}
+
+/** Etap 11: „do wydania: X (w tym rezerwacja tego zlecenia: Y)” / „wolne: X (zarezerwowane dla innych: Y)”. */
+function ReservationInfo({
+  avail,
+  failed,
+  onRetry,
+  unit,
+  forOrder,
+}: {
+  avail: MaterialAvailabilityDto | null;
+  failed: boolean;
+  onRetry: () => void;
+  unit: string;
+  forOrder: boolean;
+}) {
+  if (failed) {
+    // L3: bez danych o rezerwacjach decyduje serwer (RESERVED_STOCK) — informujemy i pozwalamy ponowić.
+    return (
+      <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-100 p-3 text-base text-amber-950">
+        <span>Nie udało się sprawdzić rezerwacji.</span>
+        <Button type="button" variant="outline" onClick={onRetry}>
+          Ponów
+        </Button>
+      </div>
+    );
+  }
+  if (!avail) return <p className="text-base text-muted-foreground">Sprawdzanie rezerwacji…</p>;
+  const others = Math.max(0, avail.reservedTotal - avail.ownReserved);
+  return (
+    <p className="rounded-xl bg-muted p-3 text-base">
+      {forOrder ? (
+        <>
+          Dostępne dla tego zlecenia: <strong>{formatQuantityUnit(avail.availableForIssue, unit)}</strong>
+          {avail.ownReserved > 0 && <> (w tym rezerwacja tego zlecenia: {formatQuantityUnit(avail.ownReserved, unit)})</>}
+        </>
+      ) : (
+        <>
+          Wolne: <strong>{formatQuantityUnit(avail.free, unit)}</strong>
+        </>
+      )}
+      {others > 0 && <> · zarezerwowane dla innych zleceń: {formatQuantityUnit(others, unit)}</>}
+    </p>
   );
 }

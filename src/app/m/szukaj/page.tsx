@@ -57,6 +57,11 @@ export default async function MobileSearchPage({ searchParams }: PageProps<"/m/s
                     </span>
                   </span>
                   <span className="text-base text-muted-foreground">{m.name}</span>
+                  {m.reservedQuantity > 0 && (
+                    <span className="text-sm text-muted-foreground">
+                      zarezerwowane {formatQuantity(m.reservedQuantity)} · wolne {formatQuantity(m.freeQuantity)}
+                    </span>
+                  )}
                   {m.belowMinimum && (
                     <span className="w-fit rounded-md bg-rose-100 px-2 py-0.5 text-sm font-semibold text-rose-900">
                       poniżej minimum

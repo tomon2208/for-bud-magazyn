@@ -13,11 +13,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Notice } from "@/lib/api-client";
 import { fetchLocationByCode, submitOperation, type IssuePayload, type TransferPayload } from "@/lib/stock-client";
 import { useOperationAttempt } from "@/lib/use-operation-attempt";
+import { useConfirmGuard } from "@/lib/confirm-guard";
 import { MAX_SEARCH_LENGTH } from "@/lib/validation/catalog";
 import { orderSubLabel } from "@/lib/validation/orders";
 import { parseScannedCode } from "@/lib/validation/locations";
 import {
   ISSUE_REASONS,
+  MIN_OVERRIDE_REASON_LENGTH,
   ISSUE_REASON_LABELS,
   MAX_NOTE_LENGTH,
   MAX_REASON_LENGTH,
@@ -329,8 +331,61 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const att = useOperationAttempt<IssuePayload>();
   const [lookingUp, setLookingUp] = useState(false);
   const [sentLabel, setSentLabel] = useState<{ code: string; unit: string; locationCode: string; target: string } | null>(null);
+  // Etap 11: RESERVED_STOCK → ADMIN może świadomie wydać mimo rezerwacji (powód, potwierdzenie z useConfirmGuard).
+  const [blocked, setBlocked] = useState<{ payload: IssuePayload; label: NonNullable<typeof sentLabel> } | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const guard = useConfirmGuard();
 
-  const locked = att.locked || lookingUp;
+  const locked = att.locked || lookingUp || overrideOpen;
+
+  function resetOverride() {
+    setBlocked(null);
+    setOverrideOpen(false);
+    setOverrideReason("");
+  }
+
+  async function send(payload: IssuePayload | null, label: NonNullable<typeof sentLabel>) {
+    setSentLabel(label);
+    setNotice(null);
+    const res = await att.run(payload, (body) => submitOperation("ISSUE", body));
+    if (!res) return;
+    if (res.kind === "ok") {
+      const overridden = (res.data.reservationsOverridden ?? []).reduce((sum, o) => sum + o.quantity, 0);
+      setNotice(
+        okNotice(
+          `Wydano ${formatQuantityUnit(res.data.quantity, label.unit)} ${label.code} z ${label.locationCode} na ${label.target}. ` +
+            `Zostało w lokalizacji: ${formatQuantityUnit(res.data.remainingLocationQuantity, label.unit)}` +
+            (overridden > 0 ? `; zmniejszono rezerwacje innych zleceń o ${formatQuantityUnit(overridden, label.unit)}` : ""),
+          res.data.idempotentReplay,
+        ),
+      );
+      setSentLabel(null);
+      setMaterial(null);
+      setQty("");
+      setNote("");
+      resetOverride();
+      onSaved();
+    } else if (res.kind === "error") {
+      setNotice({
+        kind: "error",
+        text:
+          res.code === "INSUFFICIENT_STOCK" && res.available !== undefined
+            ? `Niewystarczający stan w ${label.locationCode}. Dostępne: ${formatQuantityUnit(res.available, label.unit)}`
+            : res.message,
+      });
+      if (res.code === "RESERVED_STOCK" && payload && !payload.override_reservations) setBlocked({ payload, label });
+      else if (res.code !== "RESERVED_STOCK") resetOverride();
+    }
+  }
+
+  async function confirmOverride(event: { detail: number }) {
+    if (!guard.allow(event) || !blocked) return;
+    const reason = overrideReason.trim();
+    if (reason.length < MIN_OVERRIDE_REASON_LENGTH) return setErrors({ override: "Podaj powód (min. 3 znaki)" });
+    setErrors({});
+    await send({ ...blocked.payload, client_request_id: "", override_reservations: true, override_reason: reason }, blocked.label);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -376,27 +431,8 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
       };
     }
     if (!label || (!retrying && !payload)) return;
-
-    setSentLabel(label);
-    setNotice(null);
-    const res = await att.run(payload, (body) => submitOperation("ISSUE", body));
-    if (!res) return;
-    if (res.kind === "ok") {
-      setNotice(
-        okNotice(
-          `Wydano ${formatQuantityUnit(res.data.quantity, label.unit)} ${label.code} z ${label.locationCode} na ${label.target}. ` +
-            `Zostało w lokalizacji: ${formatQuantityUnit(res.data.remainingLocationQuantity, label.unit)}`,
-          res.data.idempotentReplay,
-        ),
-      );
-      setSentLabel(null);
-      setMaterial(null);
-      setQty("");
-      setNote("");
-      onSaved();
-    } else if (res.kind === "error") {
-      setNotice({ kind: "error", text: res.available !== undefined ? `Niewystarczający stan w ${label.locationCode}. Dostępne: ${formatQuantityUnit(res.available, label.unit)}` : res.message });
-    }
+    if (!retrying) resetOverride();
+    await send(payload, label);
   }
 
   function discard() {
@@ -415,6 +451,40 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
       <CardContent className="space-y-4">
         <NoticeBox notice={notice} />
         {att.unresolved && <UnresolvedAttemptAlert status={att.attempt.status} what="wydanie" listName="wydań" />}
+        {blocked && !att.unresolved && !overrideOpen && (
+          <Button type="button" variant="outline" className="border-amber-500 text-amber-900" onClick={() => (setOverrideOpen(true), guard.arm())}>
+            Wydaj mimo rezerwacji…
+          </Button>
+        )}
+        {blocked && overrideOpen && (
+          <div role="alertdialog" aria-label="Wydanie mimo rezerwacji" className="space-y-3 rounded-lg border-2 border-amber-400 p-4">
+            <p className="font-semibold">
+              Wydać {formatQuantityUnit(blocked.payload.quantity, blocked.label.unit)} {blocked.label.code} z {blocked.label.locationCode} na{" "}
+              {blocked.label.target} mimo rezerwacji innych zleceń?
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Brakująca część zostanie zabrana z rezerwacji innych zleceń (od najnowszej) i zapisana w historii z powodem.
+            </p>
+            <Field id="iss-override" label="Powód *" error={errors.override}>
+              <Input
+                id="iss-override"
+                value={overrideReason}
+                maxLength={MAX_REASON_LENGTH}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                disabled={att.sending}
+                autoComplete="off"
+              />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={(e) => void confirmOverride(e)} disabled={att.sending}>
+                {att.sending ? "Zapisywanie…" : "Zatwierdź wydanie mimo rezerwacji"}
+              </Button>
+              <Button type="button" variant="outline" disabled={att.sending} onClick={resetOverride}>
+                Anuluj
+              </Button>
+            </div>
+          </div>
+        )}
         <form onSubmit={submit} noValidate className="grid gap-4 lg:grid-cols-2">
           <fieldset disabled={locked} className="contents">
             <div className="space-y-4">

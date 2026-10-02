@@ -196,9 +196,13 @@ export type OrderShortageDto = {
   needed: number;
   issued: number;
   remaining: number;
-  /** Stan łączny materiału w aktywnych lokalizacjach — WSPÓLNY dla wszystkich zleceń (do czasu rezerwacji). */
+  /** Dostępne DLA TEGO ZLECENIA = wolne (stan w aktywnych lokalizacjach − wszystkie rezerwacje) + rezerwacja zlecenia. */
   available: number;
   shortage: number;
+  /** Zarezerwowane dla tego zlecenia. */
+  reserved: number;
+  /** Wolne w magazynie (wspólne dla wszystkich zleceń). */
+  free: number;
 };
 type OrderShortageRow = {
   material_id: string;
@@ -210,6 +214,8 @@ type OrderShortageRow = {
   remaining: number | string;
   available: number | string;
   shortage: number | string;
+  reserved: number | string;
+  free: number | string;
 };
 
 /** Braki jednego zlecenia (ADMIN, BIURO). */
@@ -228,6 +234,8 @@ export async function getOrderShortages(db: Db, orderId: string): Promise<Servic
       remaining: Number(r.remaining),
       available: Number(r.available),
       shortage: Number(r.shortage),
+      reserved: Number(r.reserved),
+      free: Number(r.free),
     })),
   };
 }
@@ -332,8 +340,10 @@ export type ToIssueDto = {
   unit: string;
   allowsFraction: boolean;
   remaining: number;
-  /** Stan łączny w aktywnych lokalizacjach (0 = brak na stanie). */
+  /** Dostępne dla tego zlecenia (wolne + jego rezerwacja), łącznie we wszystkich aktywnych lokalizacjach. */
   available: number;
+  /** Rezerwacja tego zlecenia (część „available”). */
+  reserved: number;
 };
 type ToIssueRow = {
   material_id: string;
@@ -343,6 +353,7 @@ type ToIssueRow = {
   allows_fraction: boolean;
   remaining: number | string;
   available: number | string;
+  reserved: number | string;
 };
 
 /** Pozycje zlecenia z „pozostało do wydania” > 0 (każda rola z dostępem do magazynu). */
@@ -359,6 +370,7 @@ export async function getOrderToIssue(db: Db, orderId: string): Promise<ServiceR
       allowsFraction: r.allows_fraction,
       remaining: Number(r.remaining),
       available: Number(r.available),
+      reserved: Number(r.reserved ?? 0),
     })),
   };
 }

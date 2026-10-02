@@ -8,7 +8,8 @@ import type { ServiceResult } from "./users";
 
 // Odczyty przeglądowe (Etap 7, ADR 012): sumy per materiał, poniżej minimum, statystyki dashboardu, eksport CSV.
 // Wszystko liczy baza (widoki/funkcje SQL, klient UŻYTKOWNIKA → RLS); Worker tylko mapuje wyniki.
-// Etap 11 (rezerwacje): stan DOSTĘPNY = suma stanu − aktywne rezerwacje — zmiana wyłącznie w widoku v_material_stock.
+// Etap 11 (rezerwacje, ADR 014): v_material_stock ma reserved/free/over_reserved; „poniżej minimum” liczone od WOLNEGO
+// (stan w aktywnych lokalizacjach − rezerwacje; decyzja użytkownika po review).
 
 type Db = SupabaseClient;
 
@@ -32,6 +33,10 @@ export type MaterialTotalDto = {
   belowMinimum: boolean;
   /** Ile brakuje do minimum (0, gdy nie ma minimum albo jest spełnione). */
   shortage: number;
+  /** Etap 11: suma aktywnych rezerwacji, wolne (aktywne lokalizacje − rezerwacje, min. 0), rezerwacje > stan. */
+  reservedQuantity: number;
+  freeQuantity: number;
+  overReserved: boolean;
 };
 type MaterialTotalRow = {
   material_id: string;
@@ -49,10 +54,14 @@ type MaterialTotalRow = {
   location_count: number;
   below_minimum: boolean;
   shortage: number | string;
+  reserved_quantity: number | string;
+  free_quantity: number | string;
+  over_reserved: boolean;
 };
 const TOTAL_COLUMNS =
   "material_id, material_code, material_name, unit, allows_fraction, material_active, category_id, category_name, " +
-  "default_supplier_id, default_supplier_name, min_quantity, total_quantity, location_count, below_minimum, shortage";
+  "default_supplier_id, default_supplier_name, min_quantity, total_quantity, location_count, below_minimum, shortage, " +
+  "reserved_quantity, free_quantity, over_reserved";
 
 const toTotal = (r: MaterialTotalRow): MaterialTotalDto => ({
   materialId: r.material_id,
@@ -70,6 +79,9 @@ const toTotal = (r: MaterialTotalRow): MaterialTotalDto => ({
   locationCount: Number(r.location_count),
   belowMinimum: r.below_minimum === true,
   shortage: Number(r.shortage),
+  reservedQuantity: Number(r.reserved_quantity ?? 0),
+  freeQuantity: Number(r.free_quantity ?? 0),
+  overReserved: r.over_reserved === true,
 });
 
 export type MaterialTotalPage = { items: MaterialTotalDto[]; total: number; page: number; pageSize: number };
@@ -133,6 +145,11 @@ export type DashboardStatsDto = {
   belowMinimum: number;
   /** Liczba operacji dzisiaj (doba Europe/Warsaw) wg typu: RECEIPT, ISSUE, TRANSFER, ADJUSTMENT, REVERSAL… */
   operationsToday: Record<string, number>;
+  /** Materiały z aktywną rezerwacją / z rezerwacjami przekraczającymi stan. */
+  reservedMaterials: number;
+  overReserved: number;
+  /** Zlecenia z rezerwacją ponad pozostało do wydania (np. po wycofaniu listy). */
+  overRequirementOrders: number;
 };
 
 export async function getDashboardStats(db: Db): Promise<ServiceResult<DashboardStatsDto>> {
@@ -144,6 +161,9 @@ export async function getDashboardStats(db: Db): Promise<ServiceResult<Dashboard
     materials_in_stock: number;
     below_minimum: number;
     operations_today: Record<string, number>;
+    reserved_materials?: number;
+    over_reserved?: number;
+    over_requirement_orders?: number;
   };
   return {
     ok: true,
@@ -152,6 +172,9 @@ export async function getDashboardStats(db: Db): Promise<ServiceResult<Dashboard
       activeLocations: Number(r.active_locations),
       materialsInStock: Number(r.materials_in_stock),
       belowMinimum: Number(r.below_minimum),
+      reservedMaterials: Number(r.reserved_materials ?? 0),
+      overReserved: Number(r.over_reserved ?? 0),
+      overRequirementOrders: Number(r.over_requirement_orders ?? 0),
       operationsToday: Object.fromEntries(Object.entries(r.operations_today ?? {}).map(([k, v]) => [k, Number(v)])),
     },
   };

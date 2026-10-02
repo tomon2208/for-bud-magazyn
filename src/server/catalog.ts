@@ -59,6 +59,13 @@ export function mapDbError(error: DbError, entity: Entity, context: string): Ser
       message: "Ten materiał liczy się w całych jednostkach — stan minimalny musi być liczbą całkowitą",
     };
   }
+  if (error.code === "P0001" && error.hint === "HAS_RESERVATIONS") {
+    return {
+      status: 409,
+      code: "HAS_RESERVATIONS",
+      message: "Nie można dezaktywować materiału, który ma aktywne rezerwacje — najpierw zwolnij rezerwacje na zleceniach",
+    };
+  }
   if (error.code === "P0001" && error.hint === "HAS_STOCK") {
     return { status: 409, code: "HAS_STOCK", message: "Nie można dezaktywować materiału, który jest na stanie" };
   }

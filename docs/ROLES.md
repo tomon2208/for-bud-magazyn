@@ -51,3 +51,8 @@ Uprawnienia muszą być egzekwowane po stronie backendu, nie tylko przez ukrywan
 ## Uwagi techniczne (Etap 8–10, ADR 013)
 
 - Listy zapotrzebowania zlecenia: tworzą i wycofują BIURO i ADMIN (funkcje DB); czytają wszyscy aktywni. Braki (strona „Braki”, eksport CSV, braki zlecenia): BIURO, ADMIN. Terminal („Do wydania na to zlecenie”): PRODUKCJA, ADMIN.
+
+## Uwagi techniczne (Etap 11, ADR 014)
+
+- Rezerwacje: tworzą i zwalniają BIURO i ADMIN (funkcje DB; PRODUKCJA → 403/42501). Dostępność z rezerwacjami widzą wszyscy aktywni.
+- Wydanie mimo rezerwacji innych zleceń (override z powodem): wyłącznie ADMIN (route handler 403 + funkcja DB 42501).

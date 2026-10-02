@@ -7,13 +7,17 @@ import { createIssue } from "@/server/stock";
 
 // Wydanie towaru (PRODUKCJA, ADMIN): na zlecenie ALBO z powodem. Stan zmienia wyłącznie funkcja DB stock_issue
 // (transakcja, blokady, idempotencja). 201 — nowa operacja, 200 — powtórzenie; 409 INSUFFICIENT_STOCK
-// z `details.available` (dostępna ilość w lokalizacji).
+// z `details.available` (dostępna ilość w lokalizacji), 409 RESERVED_STOCK (towar zarezerwowany dla innych zleceń —
+// details: free, ownReserved, reservedOthers, orders). override_reservations (wydanie mimo rezerwacji) — tylko ADMIN.
 export async function POST(request: Request) {
   const auth = await requireApiRole("PRODUKCJA", "ADMIN");
   if (!auth.ok) return auth.response;
 
   const body = await parseJsonBody(request, issueSchema);
   if (!body.ok) return body.response;
+  if (body.data.override_reservations && auth.user.role !== "ADMIN") {
+    return jsonError(403, "FORBIDDEN", "Wydanie mimo rezerwacji może wykonać tylko ADMIN");
+  }
 
   const result = await createIssue(await createSupabaseServerClient(), body.data);
   if (!result.ok) {

@@ -26,6 +26,9 @@ export type IssueResponse = {
   productionOrderId: string | null;
   reasonCode: string | null;
   remainingLocationQuantity: number;
+  /** Etap 11: ile zużyto z rezerwacji zlecenia; rezerwacje innych zleceń zabrane przy wydaniu ADMIN-a mimo rezerwacji. */
+  reservationConsumed?: number;
+  reservationsOverridden?: { orderId: string; quantity: number }[];
   idempotentReplay: boolean;
 };
 
@@ -59,6 +62,9 @@ export type IssuePayload = {
   reason_code?: string | null;
   reason?: string | null;
   note?: string | null;
+  /** Etap 11: wydanie mimo rezerwacji innych zleceń — tylko ADMIN, z powodem. */
+  override_reservations?: boolean;
+  override_reason?: string | null;
 };
 
 export type TransferPayload = {

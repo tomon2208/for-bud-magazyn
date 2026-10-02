@@ -101,6 +101,42 @@ function insufficientStock(details: string | null | undefined): StockError {
   };
 }
 
+export type ReservedOrderRef = { orderId: string; number: string | null; name: string; quantity: number };
+
+/** RESERVED_STOCK: detail = JSON {free, own_reserved, reserved_others, orders[]} z funkcji stock_issue. */
+export function reservedStock(details: string | null | undefined): StockError {
+  let parsed: { free?: unknown; own_reserved?: unknown; reserved_others?: unknown; orders?: unknown } = {};
+  try {
+    parsed = JSON.parse(details ?? "{}") as typeof parsed;
+  } catch {
+    // nieczytelny detail — bez szczegółów
+  }
+  const free = safeQty(parsed.free);
+  const ownReserved = safeQty(parsed.own_reserved);
+  const reservedOthers = safeQty(parsed.reserved_others);
+  const orders: ReservedOrderRef[] = Array.isArray(parsed.orders)
+    ? (parsed.orders as { order_id?: unknown; number?: unknown; name?: unknown; quantity?: unknown }[])
+        .filter((o) => typeof o?.order_id === "string")
+        .map((o) => ({
+          orderId: o.order_id as string,
+          number: typeof o.number === "string" ? o.number : null,
+          name: typeof o.name === "string" ? o.name : "",
+          quantity: safeQty(o.quantity),
+        }))
+    : [];
+  const who = orders.map((o) => `${o.number ? `${o.number} ` : ""}${o.name} (${plQty(o.quantity)})`).join(", ");
+  const available = free + ownReserved;
+  return {
+    status: 409,
+    code: "RESERVED_STOCK",
+    message:
+      `Towar jest zarezerwowany dla innych zleceń. Można wydać: ${plQty(available)}` +
+      (ownReserved > 0 ? ` (wolne ${plQty(free)} + rezerwacja tego zlecenia ${plQty(ownReserved)})` : ` (wolne)`) +
+      `. Zarezerwowane dla innych: ${plQty(reservedOthers)}${who ? ` — ${who}` : ""}.`,
+    details: { available, free, ownReserved, reservedOthers, orders },
+  };
+}
+
 /** Mapowanie błędów funkcji stockowych na błędy API (bez ujawniania szczegółów bazy). */
 export function mapStockError(error: DbError, context: string): StockError {
   if (error.code === "42501") return { status: 403, code: "FORBIDDEN", message: "Brak uprawnień" };
@@ -113,6 +149,7 @@ export function mapStockError(error: DbError, context: string): StockError {
       };
     }
     if (error.hint === "INSUFFICIENT_STOCK") return insufficientStock(error.details);
+    if (error.hint === "RESERVED_STOCK") return reservedStock(error.details);
     if (error.hint === "STOCK_CHANGED") {
       // Korekta: stan inny niż widziany przez ADMIN-a (detail = aktualny stan) — potwierdzenie od nowa.
       const current = safeQty(error.details);
@@ -207,6 +244,10 @@ export type IssueResultDto = {
   productionOrderId: string | null;
   reasonCode: string | null;
   remainingLocationQuantity: number;
+  /** Ile zużyto z rezerwacji zlecenia (CONSUME). */
+  reservationConsumed: number;
+  /** Wydanie ADMIN-a mimo rezerwacji: zmniejszone rezerwacje innych zleceń. */
+  reservationsOverridden: { orderId: string; quantity: number }[];
   idempotentReplay: boolean;
 };
 
@@ -219,6 +260,8 @@ type IssueRpcResult = {
   production_order_id: string | null;
   reason_code: string | null;
   remaining_location_quantity: number | string;
+  reservation_consumed?: number | string;
+  reservations_overridden?: { order_id: string; quantity: number | string }[];
   idempotent_replay: boolean;
 };
 
@@ -232,6 +275,8 @@ export async function createIssue(db: Db, input: IssueInput): Promise<StockResul
     p_reason_code: input.reason_code ?? null,
     p_reason: input.reason ?? null,
     p_note: input.note ?? null,
+    p_override_reservations: input.override_reservations ?? false,
+    p_override_reason: input.override_reason ?? null,
   });
   if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createIssue") };
   const r = data as IssueRpcResult;
@@ -246,6 +291,8 @@ export async function createIssue(db: Db, input: IssueInput): Promise<StockResul
       productionOrderId: r.production_order_id,
       reasonCode: r.reason_code,
       remainingLocationQuantity: Number(r.remaining_location_quantity),
+      reservationConsumed: Number(r.reservation_consumed ?? 0),
+      reservationsOverridden: (r.reservations_overridden ?? []).map((o) => ({ orderId: o.order_id, quantity: Number(o.quantity) })),
       idempotentReplay: r.idempotent_replay === true,
     },
   };
@@ -473,6 +520,10 @@ export type StockRowDto = {
   locationActive: boolean;
   quantity: number;
   updatedAt: string;
+  /** Etap 11: suma aktywnych rezerwacji materiału (globalna, ta sama w każdym wierszu materiału). */
+  materialReserved: number;
+  /** Wolne materiału (aktywne lokalizacje − rezerwacje, min. 0). */
+  materialFree: number;
 };
 type StockRow = {
   material_id: string;
@@ -487,9 +538,11 @@ type StockRow = {
   location_active: boolean;
   quantity: number | string;
   updated_at: string;
+  material_reserved: number | string;
+  material_free: number | string;
 };
 const STOCK_COLUMNS =
-  "material_id, material_code, material_name, unit, allows_fraction, material_active, location_id, location_code, location_name, location_active, quantity, updated_at";
+  "material_id, material_code, material_name, unit, allows_fraction, material_active, location_id, location_code, location_name, location_active, quantity, updated_at, material_reserved, material_free";
 
 const toStockRow = (r: StockRow): StockRowDto => ({
   materialId: r.material_id,
@@ -504,6 +557,8 @@ const toStockRow = (r: StockRow): StockRowDto => ({
   locationActive: r.location_active,
   quantity: Number(r.quantity),
   updatedAt: r.updated_at,
+  materialReserved: Number(r.material_reserved ?? 0),
+  materialFree: Number(r.material_free ?? 0),
 });
 
 export type StockPage = { items: StockRowDto[]; total: number; page: number; pageSize: number };

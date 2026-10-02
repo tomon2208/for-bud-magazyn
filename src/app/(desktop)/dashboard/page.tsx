@@ -8,6 +8,7 @@ import { OPERATION_TYPE_LABELS, formatQuantity, formatQuantityUnit, type Operati
 import { requirePageRole } from "@/server/auth";
 import { getDashboardStats, listBelowMinimum } from "@/server/overview";
 import { getShortageCount } from "@/server/requirements";
+import { listOverRequirement, listOverReserved } from "@/server/reservations";
 import { listMovements, type MovementDto } from "@/server/stock";
 
 export const metadata: Metadata = { title: "Dashboard — FOR-BUD Magazyn" };
@@ -50,11 +51,13 @@ export default async function DashboardPage() {
   const user = await requirePageRole("ADMIN", "BIURO");
   const db = await createSupabaseServerClient();
   // Trzy lekkie zapytania równolegle; wszystko liczy baza (bez pobierania historii).
-  const [stats, below, recent, shortages] = await Promise.all([
+  const [stats, below, recent, shortages, overReserved, overRequirement] = await Promise.all([
     getDashboardStats(db),
     listBelowMinimum(db, BELOW_MIN_LIMIT),
     listMovements(db, { page: 1, pageSize: RECENT_LIMIT }, { collapseTransfers: true }),
     getShortageCount(db),
+    listOverReserved(db),
+    listOverRequirement(db),
   ]);
 
   const today = stats.ok ? stats.data.operationsToday : {};
@@ -64,6 +67,25 @@ export default async function DashboardPage() {
     <div className="max-w-7xl space-y-6">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
       <p className="text-muted-foreground">Witaj, {user.fullName}.</p>
+
+      {overReserved.ok && overReserved.data.length > 0 && (
+        <section role="alert" className="space-y-2 rounded-xl bg-amber-50 p-4 text-sm text-amber-950">
+          <p>
+            <strong>Rezerwacje przekraczają stan</strong> — po korekcie lub cofnięciu operacji w magazynie jest mniej, niż
+            zarezerwowano dla zleceń. System nie zmniejsza rezerwacji sam: zdecyduj na zleceniach, którą zwolnić.
+          </p>
+          <ul className="list-disc space-y-1 pl-5">
+            {overReserved.data.map((m) => (
+              <li key={m.materialId}>
+                <Link href={`/materialy/${m.materialId}`} className="font-mono underline underline-offset-4">
+                  {m.materialCode}
+                </Link>{" "}
+                {m.materialName}: zarezerwowano {formatQuantityUnit(m.reserved, m.unit)}, na stanie {formatQuantityUnit(m.stockActive, m.unit)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {stats.ok ? (
         <section aria-label="Podsumowanie" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -80,6 +102,7 @@ export default async function DashboardPage() {
             label="Materiały poniżej minimum"
             value={stats.data.belowMinimum}
             alert={stats.data.belowMinimum > 0}
+            hint="Liczone od wolnego stanu (stan − rezerwacje zleceń)."
           />
           {shortages.ok && (
             <Tile
@@ -90,6 +113,20 @@ export default async function DashboardPage() {
               hint="Zapotrzebowanie zleceń (Otwarte, W produkcji) ponad stan magazynu."
             />
           )}
+          <Tile
+            href="/magazyn?widok=materialy"
+            label="Materiały z rezerwacją"
+            value={stats.data.reservedMaterials}
+            alert={stats.data.overReserved > 0}
+            hint={stats.data.overReserved > 0 ? `W tym rezerwacje ponad stan: ${stats.data.overReserved}` : "Rezerwacje zleceń Otwarte / W produkcji."}
+          />
+          <Tile
+            href="#ponad-zapotrzebowanie"
+            label="Rezerwacje ponad zapotrzebowanie"
+            value={stats.data.overRequirementOrders}
+            alert={stats.data.overRequirementOrders > 0}
+            hint="Zlecenia z rezerwacją większą niż pozostało do wydania (np. po wycofaniu listy)."
+          />
           <Card className="sm:col-span-2 xl:col-span-4">
             <CardHeader>
               <CardTitle>
@@ -117,6 +154,26 @@ export default async function DashboardPage() {
         </p>
       )}
 
+      {overRequirement.ok && overRequirement.data.length > 0 && (
+        <section id="ponad-zapotrzebowanie" aria-labelledby="over-req-title" className="space-y-3">
+          <h2 id="over-req-title" className="text-lg font-semibold">
+            Rezerwacje ponad zapotrzebowanie
+          </h2>
+          <ul className="list-disc space-y-1 pl-5 text-sm">
+            {overRequirement.data.map((r) => (
+              <li key={`${r.orderId}:${r.materialId}`}>
+                <Link href={`/zlecenia/${r.orderId}#rezerwacje`} className="underline underline-offset-4">
+                  {r.orderNumber ? `${r.orderNumber} · ` : ""}
+                  {r.orderName}
+                </Link>{" "}
+                — <span className="font-mono">{r.materialCode}</span>: zarezerwowano {formatQuantityUnit(r.reserved, r.unit)}, pozostało do
+                wydania {formatQuantityUnit(r.remaining, r.unit)} (nadmiar {formatQuantityUnit(r.excess, r.unit)})
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section aria-labelledby="below-min-title" className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="below-min-title" className="text-lg font-semibold">
@@ -142,6 +199,7 @@ export default async function DashboardPage() {
                   <TableHead>Kod</TableHead>
                   <TableHead>Nazwa</TableHead>
                   <TableHead className="text-right">Stan</TableHead>
+                  <TableHead className="text-right">Wolne</TableHead>
                   <TableHead className="text-right">Minimum</TableHead>
                   <TableHead className="text-right">Brakuje</TableHead>
                   <TableHead>Domyślny dostawca</TableHead>
@@ -157,6 +215,7 @@ export default async function DashboardPage() {
                     </TableCell>
                     <TableCell>{m.name}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">{formatQuantityUnit(m.totalQuantity, m.unit)}</TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatQuantityUnit(m.freeQuantity, m.unit)}</TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       {formatQuantityUnit(m.minQuantity ?? 0, m.unit)}
                     </TableCell>

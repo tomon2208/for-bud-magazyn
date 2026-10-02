@@ -8,15 +8,17 @@ import { formatQuantity } from "@/lib/validation/stock";
 import { requirePageRole } from "@/server/auth";
 import { getOrder, getOrderIssueSummary } from "@/server/orders";
 import { getOrderShortages, listRequirements } from "@/server/requirements";
+import { getOrderReservations } from "@/server/reservations";
 import { listMovements } from "@/server/stock";
 import { OrderHeader } from "./order-header";
 import { RequirementsSection } from "./requirements-section";
+import { ReservationsSection } from "./reservations-section";
 
 export const metadata: Metadata = { title: "Zlecenie — FOR-BUD Magazyn" };
 
 const DATE = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Warsaw" });
 
-// Szczegóły zlecenia: dane i status, zapotrzebowanie (listy), braki zlecenia, podsumowanie wydań per materiał,
+// Szczegóły zlecenia: dane i status, zapotrzebowanie (listy), rezerwacje, braki zlecenia, podsumowanie wydań per materiał,
 // ostatnie wydania (pełna lista — „Wydania”).
 export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/[id]">) {
   await requirePageRole("ADMIN", "BIURO");
@@ -33,11 +35,12 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
       </p>
     );
   }
-  const [requirements, shortages, summary, issues] = await Promise.all([
+  const [requirements, shortages, summary, issues, reservations] = await Promise.all([
     listRequirements(db, id.data),
     getOrderShortages(db, id.data),
     getOrderIssueSummary(db, id.data),
     listMovements(db, { type: "ISSUE", orderId: id.data, page: 1, pageSize: 100 }),
+    getOrderReservations(db, id.data),
   ]);
   const o = order.data;
 
@@ -51,10 +54,24 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
       </div>
 
       {requirements.ok ? (
-        <RequirementsSection orderId={o.id} orderStatus={o.status} requirements={requirements.data} canEdit />
+        <RequirementsSection
+          orderId={o.id}
+          orderStatus={o.status}
+          requirements={requirements.data}
+          canEdit
+          reservations={reservations.ok ? reservations.data.items : []}
+        />
       ) : (
         <p role="alert" className="text-destructive">
           Nie udało się wczytać zapotrzebowania.
+        </p>
+      )}
+
+      {reservations.ok ? (
+        <ReservationsSection orderId={o.id} orderStatus={o.status} items={reservations.data.items} events={reservations.data.events} />
+      ) : (
+        <p role="alert" className="text-destructive">
+          Nie udało się wczytać rezerwacji.
         </p>
       )}
 
@@ -63,12 +80,13 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
           Braki zlecenia
         </h2>
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">
-          „Dostępne” jest wspólne dla wszystkich zleceń — ten sam stan może pokrywać kilka zleceń naraz. Prawdziwe braki do
-          zamówienia pokazuje strona{" "}
+          „Dostępne” = wolne w magazynie (wspólne dla wszystkich zleceń, po odjęciu rezerwacji) + rezerwacja tego zlecenia.
+          Wolny stan może pokrywać kilka zleceń naraz — zarezerwuj, aby go zabezpieczyć. Łączne braki do zamówienia pokazuje
+          strona{" "}
           <Link href="/braki" className="font-medium underline underline-offset-4">
             Braki
-          </Link>{" "}
-          (do czasu wprowadzenia rezerwacji).
+          </Link>
+          .
         </p>
         {!shortages.ok ? (
           <p role="alert" className="text-destructive">
@@ -87,6 +105,8 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
                   <TableHead className="text-right">Potrzebne</TableHead>
                   <TableHead className="text-right">Wydano</TableHead>
                   <TableHead className="text-right">Pozostało</TableHead>
+                  <TableHead className="text-right">Zarezerwowane</TableHead>
+                  <TableHead className="text-right">Wolne</TableHead>
                   <TableHead className="text-right">Dostępne</TableHead>
                   <TableHead className="text-right">Brakuje</TableHead>
                 </TableRow>
@@ -104,6 +124,8 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
                     <TableCell className="text-right">{formatQuantity(r.needed)}</TableCell>
                     <TableCell className="text-right">{formatQuantity(r.issued)}</TableCell>
                     <TableCell className="text-right">{formatQuantity(r.remaining)}</TableCell>
+                    <TableCell className="text-right">{r.reserved > 0 ? formatQuantity(r.reserved) : "—"}</TableCell>
+                    <TableCell className="text-right">{formatQuantity(r.free)}</TableCell>
                     <TableCell className="text-right">{formatQuantity(r.available)}</TableCell>
                     <TableCell className={`text-right font-semibold ${r.shortage > 0 ? "text-destructive" : ""}`}>
                       {r.shortage > 0 ? formatQuantity(r.shortage) : "—"}

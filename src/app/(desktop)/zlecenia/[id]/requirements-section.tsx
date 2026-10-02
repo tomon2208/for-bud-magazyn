@@ -19,6 +19,10 @@ import {
 } from "@/lib/validation/requirements";
 import { checkQuantity, formatQuantity } from "@/lib/validation/stock";
 import type { RequirementDto } from "@/server/requirements";
+import type { OrderReservationDto } from "@/server/reservations";
+import { excessAfterWithdraw } from "@/lib/validation/reservations";
+
+
 
 const DATE = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Warsaw" });
 
@@ -79,11 +83,13 @@ export function RequirementsSection({
   orderStatus,
   requirements,
   canEdit,
+  reservations = [],
 }: {
   orderId: string;
   orderStatus: OrderStatus;
   requirements: RequirementDto[];
   canEdit: boolean;
+  reservations?: OrderReservationDto[];
 }) {
   const { run, busy, notice, setNotice } = useApiAction();
   const [form, setForm] = useState<{ key: number; prefill: Prefill | null } | null>(null);
@@ -108,8 +114,12 @@ export function RequirementsSection({
     const text = reason.trim();
     if (text.length < MIN_WITHDRAW_REASON_LENGTH) return setReasonError(`Podaj powód (minimum ${MIN_WITHDRAW_REASON_LENGTH} znaki)`);
     const overwrite = canAdd && form !== null && formRowsRef.current > 0;
+    const excess = excessAfterWithdraw(r, reservations);
     const question =
       `Wycofać listę „${r.name}”? Przestanie liczyć się do zapotrzebowania zlecenia.` +
+      (excess.length > 0
+        ? ` Zlecenie będzie miało rezerwacje ponad nowe zapotrzebowanie (${excess.join(", ")}) — rezerwacje NIE zmienią się same; po wycofaniu możesz użyć „Zwolnij nadmiar” w sekcji Rezerwacje.`
+        : "") +
       (overwrite ? " Otwarty formularz z wpisanymi pozycjami zostanie zastąpiony poprawioną kopią tej listy." : "");
     if (!window.confirm(question)) return;
     setReasonError(null);

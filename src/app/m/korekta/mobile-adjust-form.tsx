@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useMaterialAvailability } from "@/lib/availability-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatDelta, previewAdjustment, quantityDelta } from "@/lib/adjustment";
+import { formatDelta, previewAdjustment, quantityDelta, reservationShortfallAfterAdjust } from "@/lib/adjustment";
 import { fetchCurrentQuantity, submitAdjustment, type AdjustmentPayload, type CurrentQuantity } from "@/lib/stock-client";
 import { useConfirmGuard } from "@/lib/confirm-guard";
 import { useOperationAttempt } from "@/lib/use-operation-attempt";
@@ -52,6 +53,7 @@ export function MobileAdjustForm({ backHref, location, material }: { backHref: s
   const currentValue = current.kind === "ok" ? current.value : null;
   const preview = currentValue === null ? null : previewAdjustment(qty, currentValue, unit, material.allowsFraction);
   const inactive = !material.active || !location.active;
+  const avail = useMaterialAvailability(material.id, reload);
 
   function next() {
     setError(null);
@@ -176,6 +178,13 @@ export function MobileAdjustForm({ backHref, location, material }: { backHref: s
                 {reasonText.trim() && ` — ${reasonText.trim()}`}
               </p>
             </section>
+          )}
+          {shown && reservationShortfallAfterAdjust(avail, quantityDelta(shown.to, shown.from), location.active) > 0 && (
+            <p role="alert" className="rounded-xl bg-amber-100 p-4 text-base font-medium text-amber-950">
+              Uwaga: po korekcie rezerwacje zleceń przekroczą stan o{" "}
+              {formatQuantityUnit(reservationShortfallAfterAdjust(avail, quantityDelta(shown.to, shown.from), location.active), unit)}.
+              Rezerwacje nie zmienią się same.
+            </p>
           )}
           {error && (
             <p role="alert" className="rounded-xl bg-amber-100 p-4 text-base font-medium text-amber-900">

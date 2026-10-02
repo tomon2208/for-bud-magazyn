@@ -116,6 +116,7 @@ export const ISSUE_REASON_LABELS: Record<IssueReasonCode, string> = {
   INNY: "Inny",
 };
 export const MAX_REASON_LENGTH = 200;
+export const MIN_OVERRIDE_REASON_LENGTH = 3;
 
 /** Etykieta powodu (nieznany kod → sam kod). */
 export function issueReasonLabel(code: string | null | undefined): string {
@@ -136,9 +137,18 @@ export const issueSchema = z
     reason_code: z.enum(ISSUE_REASONS, { error: "Wybierz powód z listy" }).nullable().optional(),
     reason: optionalText("Opis powodu", MAX_REASON_LENGTH).optional(),
     note: optionalText("Notatka", MAX_NOTE_LENGTH).optional(),
+    // Etap 11: wydanie mimo rezerwacji innych zleceń — tylko ADMIN (route handler → 403, funkcja DB → 42501).
+    override_reservations: z.boolean({ error: "Nieprawidłowa wartość" }).optional(),
+    override_reason: optionalText("Powód wydania mimo rezerwacji", MAX_REASON_LENGTH).optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
+    if (v.override_reservations && (!v.override_reason || v.override_reason.length < MIN_OVERRIDE_REASON_LENGTH)) {
+      ctx.addIssue({ code: "custom", path: ["override_reason"], message: "Podaj powód wydania mimo rezerwacji (min. 3 znaki)" });
+    }
+    if (!v.override_reservations && v.override_reason) {
+      ctx.addIssue({ code: "custom", path: ["override_reason"], message: "Powód podaje się tylko przy wydaniu mimo rezerwacji" });
+    }
     const hasOrder = !!v.production_order_id;
     const hasReason = !!v.reason_code;
     if (hasOrder === hasReason) {

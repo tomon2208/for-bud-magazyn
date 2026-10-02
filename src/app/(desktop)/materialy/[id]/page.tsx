@@ -11,6 +11,7 @@ import { OPERATION_TYPE_LABELS, formatQuantity, formatQuantityUnit, type Operati
 import { requirePageRole } from "@/server/auth";
 import { getMaterial } from "@/server/catalog";
 import { getMaterialTotal } from "@/server/overview";
+import { getMaterialAvailability } from "@/server/reservations";
 import { listMovements, listStock, type MovementDto } from "@/server/stock";
 
 export const metadata: Metadata = { title: "Materiał — FOR-BUD Magazyn" };
@@ -32,12 +33,14 @@ export default async function MaterialDetailsPage({ params }: PageProps<"/materi
   if (!id.success) notFound();
 
   const db = await createSupabaseServerClient();
-  const [material, total, stock, moves] = await Promise.all([
+  const [material, total, stock, moves, availability] = await Promise.all([
     getMaterial(db, id.data),
     getMaterialTotal(db, id.data),
     listStock(db, { materialId: id.data, page: 1, pageSize: 200 }),
     listMovements(db, { materialId: id.data, page: 1, pageSize: 10 }, { collapseTransfers: true }),
+    getMaterialAvailability(db, id.data),
   ]);
+  const av = availability.ok ? availability.data : null;
   if (!material.ok) {
     if (material.error.status === 404) notFound();
     return (
@@ -96,8 +99,52 @@ export default async function MaterialDetailsPage({ params }: PageProps<"/materi
               Poniżej minimum — brakuje {formatQuantityUnit(t.shortage, m.unit)}.
             </p>
           )}
+          {av && (
+            <div className="text-sm">
+              Zarezerwowane: <strong>{formatQuantityUnit(av.reservedTotal, m.unit)}</strong> · Wolne:{" "}
+              <strong>{formatQuantityUnit(av.free, m.unit)}</strong>
+              <span className="text-muted-foreground"> (minimum porównujemy z wolnym stanem)</span>
+            </div>
+          )}
+          {av?.overReserved && (
+            <p role="alert" className="rounded-md bg-amber-50 p-2 text-sm text-amber-950">
+              Rezerwacje przekraczają stan ({formatQuantityUnit(av.reservedTotal, m.unit)} &gt; {formatQuantityUnit(av.stockActive, m.unit)}) —
+              zdecyduj na zleceniu, którą rezerwację zwolnić.
+            </p>
+          )}
         </CardContent>
       </Card>
+
+      {av && av.orders.length > 0 && (
+        <section aria-labelledby="reservations" className="space-y-3">
+          <h2 id="reservations" className="text-lg font-semibold">
+            Rezerwacje zleceń
+          </h2>
+          <div className="overflow-x-auto rounded-xl border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Zlecenie</TableHead>
+                  <TableHead className="text-right">Zarezerwowane</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {av.orders.map((o) => (
+                  <TableRow key={o.orderId}>
+                    <TableCell>
+                      <Link href={`/zlecenia/${o.orderId}#rezerwacje`} className="underline underline-offset-4">
+                        {o.number ? `${o.number} · ` : ""}
+                        {o.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">{formatQuantityUnit(o.quantity, m.unit)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="by-location" className="space-y-3">
         <h2 id="by-location" className="text-lg font-semibold">

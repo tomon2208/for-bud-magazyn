@@ -343,9 +343,10 @@ describe("dashboard_stats", () => {
 // ---------------------------------------------------------------------------
 describe("export_stock_csv", () => {
   const CRLF = "\r\n";
-  const HEADER_LOCATION = "Kod materiału;Nazwa materiału;Kategoria;Jednostka;Lokalizacja;Nazwa lokalizacji;Ilość";
+  const HEADER_LOCATION =
+    "Kod materiału;Nazwa materiału;Kategoria;Jednostka;Lokalizacja;Nazwa lokalizacji;Ilość;Zarezerwowane (materiał);Wolne (materiał)";
   const HEADER_MATERIAL =
-    "Kod materiału;Nazwa materiału;Kategoria;Jednostka;Stan łączny;Stan minimalny;Brakuje do minimum;Poniżej minimum;Liczba lokalizacji;Domyślny dostawca";
+    "Kod materiału;Nazwa materiału;Kategoria;Jednostka;Stan łączny;Zarezerwowane;Wolne;Stan minimalny;Brakuje do minimum;Poniżej minimum;Liczba lokalizacji;Domyślny dostawca";
   const exportCsv = (
     session: SupabaseClient,
     variant: string,
@@ -365,9 +366,9 @@ describe("export_stock_csv", () => {
     expect(res.data).toBe(
       text([
         HEADER_LOCATION,
-        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L1;;9`,
-        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L2;;3`,
-        `${P}-C;Materiał C;${P}-kat;szt.;${P}-L1;;100`,
+        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L1;;9;0;12`,
+        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L2;;3;0;12`,
+        `${P}-C;Materiał C;${P}-kat;szt.;${P}-L1;;100;0;100`,
       ]),
     );
     expect((res.data as string).charCodeAt(0)).not.toBe(0xfeff);
@@ -379,8 +380,8 @@ describe("export_stock_csv", () => {
     expect(res.data).toBe(
       text([
         HEADER_LOCATION,
-        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L1;;9`,
-        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L2;;3`,
+        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L1;;9;0;12`,
+        `${P}-A;Materiał A;${P}-kat;szt.;${P}-L2;;3;0;12`,
       ]),
     );
   });
@@ -390,17 +391,17 @@ describe("export_stock_csv", () => {
     expect(all.data).toBe(
       text([
         HEADER_MATERIAL,
-        `${P}-A;Materiał A;${P}-kat;szt.;12;20;8;TAK;2;`,
-        `${P}-B;Materiał B;${P}-kat;mb;0;2,5;2,5;TAK;0;`,
-        `${P}-C;Materiał C;${P}-kat;szt.;100;;0;NIE;1;`,
+        `${P}-A;Materiał A;${P}-kat;szt.;12;0;12;20;8;TAK;2;`,
+        `${P}-B;Materiał B;${P}-kat;mb;0;0;0;2,5;2,5;TAK;0;`,
+        `${P}-C;Materiał C;${P}-kat;szt.;100;0;100;;0;NIE;1;`,
       ]),
     );
     const below = await exportCsv(asBiuro, "material", { below: true });
     expect(below.data).toBe(
       text([
         HEADER_MATERIAL,
-        `${P}-A;Materiał A;${P}-kat;szt.;12;20;8;TAK;2;`,
-        `${P}-B;Materiał B;${P}-kat;mb;0;2,5;2,5;TAK;0;`,
+        `${P}-A;Materiał A;${P}-kat;szt.;12;0;12;20;8;TAK;2;`,
+        `${P}-B;Materiał B;${P}-kat;mb;0;0;0;2,5;2,5;TAK;0;`,
       ]),
     );
   });
@@ -429,10 +430,10 @@ describe("export_stock_csv", () => {
       text([
         HEADER_LOCATION,
         // kod wyglądający na liczbę (0-wiodące) → ="KOD" (w CSV z podwojonymi cudzysłowami); lokalizacja też
-        `"=""${ids.numCode}""";Cyfry;${P}-kat4;mb;"=""${ids.numLocCode}""";;2,5`,
-        `${P}-X1;'=cmd|' /C calc'!A0;${P}-kat4;szt.;${P}-L1;;1`,
-        `${P}-X2;"Profil; ""biały""\nlinia2";${P}-kat4;szt.;${P}-L1;;2`,
-        `${P}-X3;'-2+3;${P}-kat4;szt.;${P}-L1;;3`,
+        `"=""${ids.numCode}""";Cyfry;${P}-kat4;mb;"=""${ids.numLocCode}""";;2,5;0;2,5`,
+        `${P}-X1;'=cmd|' /C calc'!A0;${P}-kat4;szt.;${P}-L1;;1;0;1`,
+        `${P}-X2;"Profil; ""biały""\nlinia2";${P}-kat4;szt.;${P}-L1;;2;0;2`,
+        `${P}-X3;'-2+3;${P}-kat4;szt.;${P}-L1;;3;0;3`,
       ]),
     );
   });

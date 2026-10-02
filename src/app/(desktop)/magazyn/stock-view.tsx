@@ -222,6 +222,11 @@ function LocationsTable({ page, canAdjust }: { page: StockPage; canAdjust: boole
               </TableCell>
               <TableCell className="text-right whitespace-nowrap">
                 <span className="font-semibold">{formatQuantity(r.quantity)}</span> {r.unit}
+                {r.materialReserved > 0 && (
+                  <div className="text-xs text-muted-foreground" title="Rezerwacje są globalne per materiał (wszystkie lokalizacje)">
+                    materiał zarezerwowany: {formatQuantity(r.materialReserved)}
+                  </div>
+                )}
               </TableCell>
               {canAdjust && (
                 <TableCell className="text-right">
@@ -252,6 +257,8 @@ function TotalsTable({ page }: { page: MaterialTotalPage }) {
             <TableHead>Nazwa</TableHead>
             <TableHead>Kategoria</TableHead>
             <TableHead className="text-right">Stan łączny</TableHead>
+            <TableHead className="text-right">Zarezerwowane</TableHead>
+            <TableHead className="text-right">Wolne</TableHead>
             <TableHead className="text-right">Minimum</TableHead>
             <TableHead className="text-right">Lokalizacje</TableHead>
             <TableHead>Status</TableHead>
@@ -274,15 +281,21 @@ function TotalsTable({ page }: { page: MaterialTotalPage }) {
                 <span className="font-semibold">{formatQuantity(m.totalQuantity)}</span> {m.unit}
               </TableCell>
               <TableCell className="text-right whitespace-nowrap">
+                {m.reservedQuantity > 0 ? formatQuantity(m.reservedQuantity) : "—"}
+              </TableCell>
+              <TableCell className="text-right whitespace-nowrap">{formatQuantity(m.freeQuantity)}</TableCell>
+              <TableCell className="text-right whitespace-nowrap">
                 {m.minQuantity === null ? "—" : `${formatQuantity(m.minQuantity)} ${m.unit}`}
               </TableCell>
               <TableCell className="text-right">{m.locationCount}</TableCell>
               <TableCell>
-                {m.belowMinimum ? (
-                  <Badge variant="destructive">poniżej minimum (brakuje {formatQuantity(m.shortage)})</Badge>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
+                {m.belowMinimum && <Badge variant="destructive">poniżej minimum (brakuje {formatQuantity(m.shortage)})</Badge>}
+                {m.overReserved && (
+                  <Badge variant="outline" className="border-amber-500 text-amber-900">
+                    rezerwacje przekraczają stan
+                  </Badge>
                 )}
+                {!m.belowMinimum && !m.overReserved && <span className="text-muted-foreground">—</span>}
               </TableCell>
             </TableRow>
           ))}

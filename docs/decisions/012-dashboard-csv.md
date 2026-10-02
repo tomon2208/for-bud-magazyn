@@ -46,3 +46,11 @@ Migracja: `supabase/migrations/20261002140000_dashboard_min_quantity.sql`. Funkc
 - **Kody w Excelu (M1):** kod materiału/lokalizacji, który Excel zinterpretowałby jako liczbę, datę lub notację naukową (`0518`, `518`, `12-03`, `1/2`, `12.05`, długie liczby, `1E5`), jest emitowany jako `="KOD"` — wyłącznie gdy składa się ze znaków `[A-Z0-9._/ -]` (formuła nie może zawierać nic poza literałem). W pliku CSV wygląda to tak: `"=""0518"""`. Pozostałe kody (`K518 RAL9016`, `A-01`) bez zmian; kody spoza bezpiecznego wzorca przechodzą zwykłą neutralizację/cytowanie.
 - UI „Pobierz CSV”: `fetch` + blob; błąd (401 po wygaśnięciu sesji, 403, 400 „zawęź filtry”, 5xx) pokazany w UI zamiast pliku JSON; nazwa pliku z `Content-Disposition`.
 - Magazyn: pojedynczy zły parametr w URL jest ignorowany bez kasowania pozostałych filtrów; pole wyszukiwania synchronizuje się z URL (menu/Wstecz). Kafel „Materiały ze stanem > 0” ma dopisek, że lista „Suma per materiał” zawiera też materiały poniżej minimum bez stanu. Szczegóły materiału i ekran mobilny pokazują „Pokazano X z Y”, gdy lista lokalizacji jest obcięta.
+
+## Etap 11 (ADR 014)
+
+- „Poniżej minimum” jest liczone od **wolnego** stanu (stan w aktywnych lokalizacjach − aktywne rezerwacje, min. 0) —
+  `v_stock`, `v_material_stock` (`below_minimum`, `shortage`, `in_view`), dashboard, eksport CSV (migracja
+  `20261004110000_reservations_review_fixes.sql`). Eksport CSV ma kolumny „Zarezerwowane”, „Wolne” (wariant materiałowy)
+  oraz „Zarezerwowane (materiał)”, „Wolne (materiał)” (wariant lokalizacyjny). Dashboard: kafle „Materiały z
+  rezerwacją”, „Rezerwacje ponad zapotrzebowanie” i ostrzeżenie „rezerwacje przekraczają stan”.
