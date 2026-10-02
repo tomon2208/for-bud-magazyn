@@ -126,6 +126,14 @@ describe("POST /orders", () => {
     expect(serviceCalls()).toBe(0);
   });
 
+  it("201 z numerem (przycięty); numer w PATCH; 409 NUMBER_TAKEN z serwisu", async () => {
+    const res = await orders.POST(jsonRequest("POST", "/api/v1/orders", { name: "Kowalski", number: "  Z-1 " }));
+    expect(res.status).toBe(201);
+    expect(service.createOrder).toHaveBeenCalledWith(expect.anything(), { name: "Kowalski", number: "Z-1" });
+    service.createOrder.mockResolvedValue({ ok: false, error: { status: 409, code: "NUMBER_TAKEN", message: "x" } });
+    expect((await orders.POST(jsonRequest("POST", "/api/v1/orders", { name: "a", number: "Z-1" }))).status).toBe(409);
+  });
+
   it("CSRF: text/plain → 415, obcy Origin → 403", async () => {
     expect((await orders.POST(jsonRequest("POST", "/api/v1/orders", { name: "a" }, { "content-type": "text/plain" }))).status).toBe(415);
     expect((await orders.POST(jsonRequest("POST", "/api/v1/orders", { name: "a" }, { origin: "https://evil.example" }))).status).toBe(403);
@@ -137,7 +145,7 @@ describe("PATCH /orders/[id]", () => {
   beforeEach(() => as("ADMIN"));
 
   it("zmiana statusu (także ponowne otwarcie)", async () => {
-    for (const status of ["DONE", "CANCELLED", "OPEN"]) {
+    for (const status of ["IN_PRODUCTION", "DONE", "CANCELLED", "OPEN"]) {
       const res = await orderById.PATCH(jsonRequest("PATCH", `/api/v1/orders/${ID}`, { status }), ctx());
       expect(res.status).toBe(200);
     }
@@ -147,6 +155,7 @@ describe("PATCH /orders/[id]", () => {
   it.each([
     ["pusty patch", {}],
     ["zły status", { status: "IN_PROGRESS" }],
+    ["numer > 50 znaków", { number: "x".repeat(51) }],
     ["id w body", { id: ID, name: "x" }],
   ])("%s → 400", async (_n, body) => {
     expect((await orderById.PATCH(jsonRequest("PATCH", `/api/v1/orders/${ID}`, body), ctx())).status).toBe(400);
@@ -166,6 +175,8 @@ describe("GET /orders — parametry", () => {
     expect((await orders.GET(getRequest("/api/v1/orders?status=FOO"))).status).toBe(400);
     await orders.GET(getRequest("/api/v1/orders?status=OPEN&q=kow&pageSize=30"));
     expect(service.listOrders).toHaveBeenCalledWith(expect.anything(), { status: "OPEN", q: "kow", page: 1, pageSize: 30 });
+    await orders.GET(getRequest("/api/v1/orders?status=ISSUABLE"));
+    expect(service.listOrders).toHaveBeenLastCalledWith(expect.anything(), { status: "ISSUABLE", page: 1, pageSize: 50 });
   });
 });
 

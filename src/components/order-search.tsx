@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { MAX_SEARCH_LENGTH } from "@/lib/validation/catalog";
-import { ORDER_STATUS_LABELS, orderSubLabel, type OrderStatus } from "@/lib/validation/orders";
+import { ORDER_STATUS_LABELS, orderSubLabel, type OrderStatusFilter } from "@/lib/validation/orders";
 import type { OrderDto } from "@/server/orders";
 
 type State =
@@ -22,7 +22,7 @@ export function OrderSearch({
   onSelect,
   label = "Szukaj zlecenia",
 }: {
-  status?: OrderStatus;
+  status?: OrderStatusFilter;
   onSelect: (o: OrderDto) => void;
   label?: string;
 }) {
@@ -63,7 +63,7 @@ export function OrderSearch({
       <Input
         type="search"
         aria-label={label}
-        placeholder="Nazwa zlecenia (np. nazwisko)"
+        placeholder="Nazwa lub numer zlecenia"
         value={q}
         maxLength={MAX_SEARCH_LENGTH}
         onChange={(e) => setQ(e.target.value)}
@@ -87,7 +87,7 @@ export function OrderSearch({
                   >
                     <span className="text-sm font-medium">
                       {o.name}
-                      {!status && o.status !== "OPEN" && (
+                      {(!status || status === "ISSUABLE") && o.status !== "OPEN" && (
                         <span className="ml-2 text-xs text-muted-foreground">({ORDER_STATUS_LABELS[o.status].toLowerCase()})</span>
                       )}
                     </span>

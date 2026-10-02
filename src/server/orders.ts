@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { likeContains } from "@/lib/validation/catalog";
-import type { CreateOrderInput, ListOrdersQuery, OrderStatus, UpdateOrderInput } from "@/lib/validation/orders";
+import { buildIlikeContainsValue } from "@/lib/validation/catalog";
+import { ISSUABLE_STATUSES, type CreateOrderInput, type ListOrdersQuery, type OrderStatus, type UpdateOrderInput } from "@/lib/validation/orders";
 import type { ServiceError, ServiceResult } from "./users";
 
 // Zlecenia produkcyjne. Operacje przez klienta UŻYTKOWNIKA (RLS + trigger roli = druga linia obrony);
@@ -14,6 +14,10 @@ const INTERNAL: ServiceError = { status: 500, code: "INTERNAL", message: "Wystą
 
 export function mapOrderDbError(error: DbError, context: string): ServiceError {
   if (error.code === "42501") return { status: 403, code: "FORBIDDEN", message: "Brak uprawnień" };
+  // Unikalny numer zlecenia (bez względu na wielkość liter).
+  if (error.code === "23505") {
+    return { status: 409, code: "NUMBER_TAKEN", message: "Zlecenie o tym numerze już istnieje" };
+  }
   if (error.code === "23514" || error.code === "22P02" || error.code === "23502") {
     return { status: 400, code: "VALIDATION", message: "Nieprawidłowe dane" };
   }
@@ -24,34 +28,55 @@ export function mapOrderDbError(error: DbError, context: string): ServiceError {
 export type OrderDto = {
   id: string;
   name: string;
+  /** Opcjonalny numer nadawany przez firmę (unikalny bez względu na wielkość liter). */
+  number: string | null;
   notes: string | null;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
 };
-type OrderRow = { id: string; name: string; notes: string | null; status: OrderStatus; created_at: string; updated_at: string };
-const COLUMNS = "id, name, notes, status, created_at, updated_at";
+type OrderRow = {
+  id: string;
+  name: string;
+  number: string | null;
+  notes: string | null;
+  status: OrderStatus;
+  created_at: string;
+  updated_at: string;
+};
+const COLUMNS = "id, name, number, notes, status, created_at, updated_at";
 
 const toOrder = (r: OrderRow): OrderDto => ({
   id: r.id,
   name: r.name,
+  number: r.number,
   notes: r.notes,
   status: r.status,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
 
-export type OrderPage = { items: OrderDto[]; total: number; page: number; pageSize: number };
+/** Zlecenie na liście biura: liczba list zapotrzebowania (ACTIVE) i flaga „są braki” (wzór per zlecenie). */
+export type OrderOverviewDto = OrderDto & { requirementCount: number; hasShortage: boolean };
 
-/** Lista zleceń (najnowsze pierwsze); filtr statusu i nazwy (dosłowne „zawiera”). */
+export type OrderPage<T extends OrderDto = OrderDto> = { items: T[]; total: number; page: number; pageSize: number };
+
+/**
+ * Lista zleceń (najnowsze pierwsze); filtr statusu (konkretny albo ISSUABLE = Otwarte + W produkcji) i frazy
+ * (nazwa LUB numer, dosłowne „zawiera”).
+ */
 export async function listOrders(db: Db, q: ListOrdersQuery): Promise<ServiceResult<OrderPage>> {
   let query = db
     .from("production_orders")
     .select(COLUMNS, { count: "exact" })
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
-  if (q.status) query = query.eq("status", q.status);
-  if (q.q) query = query.ilike("name", likeContains(q.q));
+  if (q.status === "ISSUABLE") query = query.in("status", [...ISSUABLE_STATUSES]);
+  else if (q.status) query = query.eq("status", q.status);
+  if (q.q) {
+    const pattern = buildIlikeContainsValue(q.q);
+    query = query.or(`name.ilike.${pattern},number.ilike.${pattern}`);
+  }
   const from = (q.page - 1) * q.pageSize;
   const { data, error, count } = await query.range(from, from + q.pageSize - 1);
   if (error) {
@@ -61,6 +86,28 @@ export async function listOrders(db: Db, q: ListOrdersQuery): Promise<ServiceRes
   return {
     ok: true,
     data: { items: (data as OrderRow[]).map(toOrder), total: count ?? 0, page: q.page, pageSize: q.pageSize },
+  };
+}
+
+/** Lista zleceń dla biura: jak listOrders + liczba list zapotrzebowania i flaga braków (jedno dodatkowe wywołanie SQL). */
+export async function listOrdersOverview(db: Db, q: ListOrdersQuery): Promise<ServiceResult<OrderPage<OrderOverviewDto>>> {
+  const base = await listOrders(db, q);
+  if (!base.ok) return base;
+  const ids = base.data.items.map((o) => o.id);
+  const info = new Map<string, { requirementCount: number; hasShortage: boolean }>();
+  if (ids.length > 0) {
+    const { data, error } = await db.rpc("order_overview", { p_order_ids: ids });
+    if (error) return { ok: false, error: mapOrderDbError(error, "listOrdersOverview") };
+    for (const r of (data ?? []) as { production_order_id: string; requirement_count: number; has_shortage: boolean }[]) {
+      info.set(r.production_order_id, { requirementCount: Number(r.requirement_count), hasShortage: r.has_shortage === true });
+    }
+  }
+  return {
+    ok: true,
+    data: {
+      ...base.data,
+      items: base.data.items.map((o) => ({ ...o, requirementCount: info.get(o.id)?.requirementCount ?? 0, hasShortage: info.get(o.id)?.hasShortage ?? false })),
+    },
   };
 }
 
@@ -85,7 +132,7 @@ export async function updateOrder(db: Db, id: string, input: UpdateOrderInput): 
 }
 
 /**
- * Ostatnio używane przez użytkownika OTWARTE zlecenia (z jego wydań; najnowsze pierwsze). RLS: PRODUKCJA widzi
+ * Ostatnio używane przez użytkownika zlecenia do wydania (Otwarte i W produkcji) (z jego wydań; najnowsze pierwsze). RLS: PRODUKCJA widzi
  * tylko własne operacje; filtr user_id dla każdej roli.
  */
 export async function listRecentOrdersForUser(db: Db, userId: string, limit = 5): Promise<ServiceResult<OrderDto[]>> {
@@ -94,7 +141,7 @@ export async function listRecentOrdersForUser(db: Db, userId: string, limit = 5)
     .select(`order:production_orders!inner(${COLUMNS})`)
     .eq("user_id", userId)
     .eq("type", "ISSUE")
-    .eq("order.status", "OPEN")
+    .in("order.status", [...ISSUABLE_STATUSES])
     .order("created_at", { ascending: false })
     .limit(50);
   if (error) return { ok: false, error: mapOrderDbError(error, "listRecentOrdersForUser") };

@@ -15,23 +15,25 @@ import { MAX_SEARCH_LENGTH } from "@/lib/validation/catalog";
 import {
   MAX_ORDER_NAME_LENGTH,
   MAX_ORDER_NOTES_LENGTH,
+  MAX_ORDER_NUMBER_LENGTH,
   ORDER_STATUSES,
   ORDER_STATUS_LABELS,
   createOrderSchema,
   type CreateOrderInput,
   type OrderStatus,
 } from "@/lib/validation/orders";
-import type { OrderDto, OrderPage } from "@/server/orders";
+import type { OrderDto, OrderOverviewDto, OrderPage } from "@/server/orders";
 
+/** status: ISSUABLE (domyślnie: Otwarte + W produkcji), ALL (wszystkie) albo konkretny status. */
 type Filters = { status: string; q: string };
 
 const DATE = new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short", timeZone: "Europe/Warsaw" });
-const TEXTAREA_CLASS =
+export const TEXTAREA_CLASS =
   "min-h-20 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 function buildUrl(f: Filters, page: number) {
   const params = new URLSearchParams();
-  if (f.status) params.set("status", f.status);
+  if (f.status && f.status !== "ISSUABLE") params.set("status", f.status);
   if (f.q) params.set("q", f.q);
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
@@ -40,11 +42,49 @@ function buildUrl(f: Filters, page: number) {
 
 export function StatusBadge({ status }: { status: OrderStatus }) {
   if (status === "OPEN") return <Badge>{ORDER_STATUS_LABELS.OPEN}</Badge>;
+  if (status === "IN_PRODUCTION") {
+    return (
+      <Badge variant="outline" className="border-sky-600 bg-sky-50 text-sky-900">
+        {ORDER_STATUS_LABELS.IN_PRODUCTION}
+      </Badge>
+    );
+  }
   if (status === "DONE") return <Badge variant="secondary">{ORDER_STATUS_LABELS.DONE}</Badge>;
   return <Badge variant="destructive">{ORDER_STATUS_LABELS.CANCELLED}</Badge>;
 }
 
-export function OrdersView({ page, filters }: { page: OrderPage; filters: Filters }) {
+/** Pytanie potwierdzenia przy zamknięciu zlecenia (null — zmiana bez potwierdzenia). */
+export function statusChangeQuestion(name: string, status: OrderStatus): string | null {
+  if (status === "DONE") {
+    return `Zakończyć zlecenie „${name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`;
+  }
+  if (status === "CANCELLED") {
+    return `Anulować zlecenie „${name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`;
+  }
+  return null;
+}
+
+/** Przyciski zmiany statusu zgodne z przepływem Otwarte → W produkcji → Zakończone/Anulowane (+ ponowne otwarcie). */
+export function StatusButtons({
+  status,
+  busy,
+  onChange,
+}: {
+  status: OrderStatus;
+  busy: boolean;
+  onChange: (status: OrderStatus) => void;
+}) {
+  const btn = (label: string, to: OrderStatus, variant: "outline" | "destructive" = "outline") => (
+    <Button key={to} type="button" variant={variant} size="lg" disabled={busy} onClick={() => onChange(to)}>
+      {label}
+    </Button>
+  );
+  if (status === "OPEN") return <>{[btn("Do produkcji", "IN_PRODUCTION"), btn("Zakończ", "DONE"), btn("Anuluj", "CANCELLED", "destructive")]}</>;
+  if (status === "IN_PRODUCTION") return <>{[btn("Zakończ", "DONE"), btn("Anuluj", "CANCELLED", "destructive"), btn("Cofnij do otwartych", "OPEN")]}</>;
+  return btn("Otwórz ponownie", "OPEN");
+}
+
+export function OrdersView({ page, filters }: { page: OrderPage<OrderOverviewDto>; filters: Filters }) {
   const router = useRouter();
   const { run, busy, notice, setNotice } = useApiAction();
   const [editing, setEditing] = useState<OrderDto | "new" | null>(null);
@@ -57,12 +97,7 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
   }, [q, filters, router]);
 
   function setStatus(o: OrderDto, status: OrderStatus) {
-    const question =
-      status === "DONE"
-        ? `Zakończyć zlecenie „${o.name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`
-        : status === "CANCELLED"
-          ? `Anulować zlecenie „${o.name}”? Nie będzie można na nie wydawać (można je później otworzyć ponownie).`
-          : null;
+    const question = statusChangeQuestion(o.name, status);
     if (question && !window.confirm(question)) return;
     void run(
       () => callApi(`/api/v1/orders/${o.id}`, "PATCH", { status }),
@@ -71,6 +106,7 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
   }
 
   const totalPages = Math.max(1, Math.ceil(page.total / page.pageSize));
+  const filtered = filters.q !== "" || filters.status !== "ISSUABLE";
 
   return (
     <div className="space-y-6">
@@ -105,7 +141,7 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
         <Input
           type="search"
           aria-label="Szukaj zlecenia"
-          placeholder="Szukaj po nazwie (np. nazwisko klienta)"
+          placeholder="Szukaj po nazwie lub numerze"
           value={q}
           maxLength={MAX_SEARCH_LENGTH}
           onChange={(e) => setQ(e.target.value)}
@@ -118,34 +154,39 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
             onChange={(e) => router.replace(buildUrl({ q: q.trim(), status: e.target.value }, 1))}
             className={SELECT_CLASS}
           >
-            <option value="">wszystkie</option>
+            <option value="ISSUABLE">Otwarte i w produkcji</option>
             {ORDER_STATUSES.map((s) => (
               <option key={s} value={s}>
                 {ORDER_STATUS_LABELS[s]}
               </option>
             ))}
+            <option value="ALL">wszystkie</option>
           </select>
         </label>
       </div>
 
       {page.items.length === 0 ? (
         <p className="rounded-xl border p-6 text-center text-muted-foreground">
-          {filters.q || filters.status ? "Brak zleceń dla podanych filtrów." : "Brak zleceń. Dodaj pierwsze powyżej."}
+          {filtered ? "Brak zleceń dla podanych filtrów." : "Brak zleceń. Dodaj pierwsze powyżej."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-xl border">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Numer</TableHead>
                 <TableHead>Nazwa</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Utworzono</TableHead>
+                <TableHead className="text-right">Listy zapotrzebowania</TableHead>
+                <TableHead>Braki</TableHead>
                 <TableHead className="text-right">Akcje</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {page.items.map((o) => (
                 <TableRow key={o.id}>
+                  <TableCell className="font-mono whitespace-nowrap">{o.number ?? "—"}</TableCell>
                   <TableCell className="max-w-md">
                     <Link href={`/zlecenia/${o.id}`} className="font-medium underline-offset-4 hover:underline">
                       {o.name}
@@ -156,24 +197,21 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
                     <StatusBadge status={o.status} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap">{DATE.format(new Date(o.createdAt))}</TableCell>
+                  <TableCell className="text-right">{o.requirementCount}</TableCell>
+                  <TableCell>
+                    {o.hasShortage ? (
+                      <Link href={`/zlecenia/${o.id}#braki`} className="rounded-md bg-destructive/10 px-1.5 py-0.5 text-xs font-semibold text-destructive">
+                        są braki
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                   <TableCell className="space-x-2 text-right whitespace-nowrap">
                     <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => (setNotice(null), setEditing(o))}>
                       Edytuj
                     </Button>
-                    {o.status === "OPEN" ? (
-                      <>
-                        <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => setStatus(o, "DONE")}>
-                          Zakończ
-                        </Button>
-                        <Button type="button" variant="destructive" size="lg" disabled={busy} onClick={() => setStatus(o, "CANCELLED")}>
-                          Anuluj
-                        </Button>
-                      </>
-                    ) : (
-                      <Button type="button" variant="outline" size="lg" disabled={busy} onClick={() => setStatus(o, "OPEN")}>
-                        Otwórz ponownie
-                      </Button>
-                    )}
+                    <StatusButtons status={o.status} busy={busy} onChange={(s) => setStatus(o, s)} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -211,7 +249,7 @@ export function OrdersView({ page, filters }: { page: OrderPage; filters: Filter
   );
 }
 
-function OrderForm({
+export function OrderForm({
   order,
   busy,
   onCancel,
@@ -227,7 +265,7 @@ function OrderForm({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const parsed = createOrderSchema.safeParse({ name: form.get("name"), notes: form.get("notes") });
+    const parsed = createOrderSchema.safeParse({ name: form.get("name"), number: form.get("number"), notes: form.get("notes") });
     if (!parsed.success) {
       setErrors(zodFieldErrors(parsed.error.issues));
       return;
@@ -254,6 +292,16 @@ function OrderForm({
               aria-invalid={!!errors.name}
             />
           </Field>
+          <Field id="ord-number" label="Numer zlecenia (opcjonalnie, unikalny)" error={errors.number}>
+            <Input
+              id="ord-number"
+              name="number"
+              defaultValue={order?.number ?? ""}
+              maxLength={MAX_ORDER_NUMBER_LENGTH}
+              autoComplete="off"
+              aria-invalid={!!errors.number}
+            />
+          </Field>
           <Field id="ord-notes" label="Notatka" error={errors.notes} className="sm:col-span-2">
             <textarea
               id="ord-notes"
@@ -264,7 +312,7 @@ function OrderForm({
             />
           </Field>
           <p className="text-xs text-muted-foreground sm:col-span-2">
-            Nazwa nie musi być unikalna — przy wyborze zlecenia pokazujemy też datę utworzenia i notatkę.
+            Nazwa nie musi być unikalna — przy wyborze zlecenia pokazujemy też numer, datę utworzenia i notatkę.
           </p>
           <div className="flex gap-2 sm:col-span-2">
             <Button type="submit" disabled={busy}>

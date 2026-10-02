@@ -50,7 +50,7 @@ const HINTS: Record<string, ServiceError> = {
   ORDER_NOT_OPEN: {
     status: 409,
     code: "ORDER_NOT_OPEN",
-    message: "Zlecenie jest zamknięte (zakończone lub anulowane) — nie można na nie wydawać",
+    message: "Zlecenie jest zakończone lub anulowane — nie można na nie wydawać",
   },
   SAME_LOCATION: { status: 400, code: "SAME_LOCATION", message: "Lokalizacja docelowa musi być inna niż źródłowa" },
   NO_CHANGE: { status: 409, code: "NO_CHANGE", message: "Stan się zgadza — brak korekty" },

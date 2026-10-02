@@ -19,7 +19,7 @@ export default async function IssuePage({ searchParams }: PageProps<"/m/wydanie"
   const db = await createSupabaseServerClient();
   const [recentOrders, openOrders, recentMaterials, preset] = await Promise.all([
     listRecentOrdersForUser(db, user.id),
-    listOrders(db, { status: "OPEN", page: 1, pageSize: 30 }),
+    listOrders(db, { status: "ISSUABLE", page: 1, pageSize: 30 }),
     listRecentMaterials(db, user.id, { type: "ISSUE", inStockOnly: true }),
     code ? getLocationByCode(db, code) : Promise.resolve(null),
   ]);

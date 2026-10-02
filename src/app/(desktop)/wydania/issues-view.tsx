@@ -434,7 +434,7 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
                   order ? (
                     <SelectedOrder order={order} onClear={locked ? undefined : () => (setNotice(null), setOrder(null))} />
                   ) : (
-                    <OrderSearch status="OPEN" onSelect={(o) => (setNotice(null), setOrder(o))} label="Szukaj otwartego zlecenia" />
+                    <OrderSearch status="ISSUABLE" onSelect={(o) => (setNotice(null), setOrder(o))} label="Szukaj zlecenia do wydania" />
                   )
                 ) : (
                   <select

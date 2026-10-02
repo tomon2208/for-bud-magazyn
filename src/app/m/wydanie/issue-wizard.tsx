@@ -17,8 +17,10 @@ import {
   formatQuantityUnit,
   type IssueReasonCode,
 } from "@/lib/validation/stock";
-import { orderSubLabel } from "@/lib/validation/orders";
+import { ORDER_STATUS_LABELS, orderSubLabel } from "@/lib/validation/orders";
 import type { OrderDto } from "@/server/orders";
+import { suggestIssueQuantity } from "@/lib/to-issue";
+import type { ToIssueDto } from "@/server/requirements";
 import { CodeScanner } from "../code-scanner";
 import { useConfirmGuard } from "@/lib/confirm-guard";
 import { useOperationSubmit, type SubmitError } from "../use-operation-submit";
@@ -70,6 +72,10 @@ export function IssueWizard({
   const [qtyText, setQtyText] = useState("");
   const [qtyError, setQtyError] = useState<string | null>(null);
   const [quantity, setQuantity] = useState<number | null>(null);
+
+  // „Do wydania na to zlecenie” (zapotrzebowanie: pozostało > 0) — ładowane przy kroku wyboru materiału.
+  const toIssue = useToIssue(target?.kind === "order" ? target.id : null, step === "material");
+  const [toIssueMessage, setToIssueMessage] = useState<string | null>(null);
 
   const [requestId, setRequestId] = useState<string | null>(null);
   const [result, setResult] = useState<IssueResponse | null>(null);
@@ -127,9 +133,32 @@ export function IssueWizard({
     });
     setLocation({ id: row.locationId, code: row.locationCode, name: row.locationName });
     setAvailable(row.quantity);
-    setQtyText("");
+    // Materiał z zapotrzebowania zlecenia: podpowiedź ilości = min(pozostało, dostępne w tej lokalizacji).
+    // Tylko ze świeżych danych (po wydaniu stary wynik jest unieważniany do czasu nowej odpowiedzi).
+    const suggested = suggestIssueQuantity(toIssue, row.materialId, row.quantity);
+    setQtyText(suggested === null ? "" : formatQuantity(suggested));
     setQtyError(null);
     setStep("quantity");
+  }
+
+  /** Tapnięcie pozycji z „Do wydania na to zlecenie”: materiał wybrany, dalej lokalizacja (albo ilość przy ustalonej lokalizacji). */
+  async function pickPlanned(item: ToIssueDto) {
+    setToIssueMessage(null);
+    if (presetLocation) {
+      const r = await fetchStock({ materialId: item.materialId, locationId: presetLocation.id });
+      if (r.kind === "error") return setToIssueMessage(r.message);
+      const row = r.items.find((i) => i.locationId === presetLocation.id && i.quantity > 0);
+      if (!row) return setToIssueMessage(`W lokalizacji ${presetLocation.code} nie ma materiału ${item.materialCode}.`);
+      return pickStockRow(row);
+    }
+    pickMaterial({
+      id: item.materialId,
+      code: item.materialCode,
+      name: item.materialName,
+      unit: item.unit,
+      allowsFraction: item.allowsFraction,
+      defaultSupplierId: null,
+    });
   }
 
   function goSummary(event: FormEvent<HTMLFormElement>) {
@@ -385,6 +414,9 @@ export function IssueWizard({
       {step === "material" && (
         <>
           <h2 className="text-2xl font-bold">Wybierz materiał</h2>
+          {target?.kind === "order" && (
+            <ToIssueList state={toIssue} message={toIssueMessage} onSelect={(i) => void pickPlanned(i)} />
+          )}
           {presetLocation ? (
             <StockRows
               key={`loc-${presetLocation.id}`}
@@ -493,7 +525,8 @@ export function IssueWizard({
   );
 }
 
-/** Lista otwartych zleceń: ostatnio używane na górze, wyszukiwanie po nazwie (nazwy mogą się powtarzać — data i notatka). */
+/** Lista zleceń do wydania (Otwarte i W produkcji): ostatnio używane na górze, wyszukiwanie po nazwie lub numerze
+ * (nazwy mogą się powtarzać — numer, data i notatka). */
 function OrderPicker({
   recent,
   initial,
@@ -517,7 +550,7 @@ function OrderPicker({
     const timer = setTimeout(async () => {
       setState({ kind: "loading" });
       try {
-        const params = new URLSearchParams({ status: "OPEN", q: term, pageSize: "30" });
+        const params = new URLSearchParams({ status: "ISSUABLE", q: term, pageSize: "30" });
         const res = await fetch(`/api/v1/orders?${params}`, { signal: controller.signal });
         const json = (await res.json().catch(() => null)) as {
           data?: { items: OrderDto[]; total: number };
@@ -538,7 +571,14 @@ function OrderPicker({
   const row = (o: OrderDto) => (
     <li key={o.id}>
       <button type="button" className={BIG_ROW} onClick={() => onSelect(o)}>
-        <span className="text-xl font-bold break-words">{o.name}</span>
+        <span className="text-xl font-bold break-words">
+          {o.name}
+          {o.status === "IN_PRODUCTION" && (
+            <span className="ml-2 rounded-md bg-sky-100 px-2 py-0.5 align-middle text-sm font-semibold text-sky-900">
+              {ORDER_STATUS_LABELS.IN_PRODUCTION}
+            </span>
+          )}
+        </span>
         <span className="text-sm break-words text-muted-foreground">{orderSubLabel(o)}</span>
       </button>
     </li>
@@ -552,7 +592,7 @@ function OrderPicker({
       <Input
         type="search"
         aria-label="Szukaj zlecenia"
-        placeholder="Szukaj zlecenia (np. nazwisko)"
+        placeholder="Szukaj zlecenia (nazwisko, numer)"
         value={q}
         maxLength={MAX_SEARCH_LENGTH}
         onChange={(e) => setQ(e.target.value)}
@@ -570,12 +610,12 @@ function OrderPicker({
           )}
           {rest.length > 0 && (
             <>
-              <p className="text-base font-semibold text-muted-foreground">Otwarte zlecenia (najnowsze)</p>
+              <p className="text-base font-semibold text-muted-foreground">Zlecenia do wydania (najnowsze)</p>
               <ul className="flex flex-col gap-2">{rest.map(row)}</ul>
             </>
           )}
           {recent.length === 0 && initial.length === 0 && (
-            <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">Brak otwartych zleceń.</p>
+            <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">Brak zleceń do wydania.</p>
           )}
           {initialTotal > initial.length && (
             <p className="text-center text-sm text-muted-foreground">Pokazano {initial.length} z {initialTotal}. Wyszukaj po nazwie.</p>
@@ -588,7 +628,7 @@ function OrderPicker({
           {state.message}
         </p>
       ) : state.items.length === 0 ? (
-        <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">Brak otwartych zleceń dla tej frazy.</p>
+        <p className="rounded-xl border bg-background p-4 text-center text-muted-foreground">Brak zleceń do wydania dla tej frazy.</p>
       ) : (
         <>
           <ul className="flex flex-col gap-2">{state.items.map(row)}</ul>
@@ -654,5 +694,82 @@ function LocationStep({ material, onSelect }: { material: PickedMaterial; onSele
         </>
       )}
     </>
+  );
+}
+
+/**
+ * Pobiera „Do wydania na to zlecenie”; odświeża przy każdym wejściu w krok wyboru materiału (po wydaniu lista się
+ * zmienia). Stan „wczytywanie” wynika z tego, że wynik dotyczy innego zlecenia (bez setState w efekcie).
+ */
+function useToIssue(orderId: string | null, active: boolean) {
+  const [state, setState] = useState<{ kind: "ok" | "error"; items: ToIssueDto[]; orderId: string; message?: string } | null>(null);
+  // Każde wejście w krok wyboru materiału unieważnia stary wynik (stan „wczytywanie” do nowej odpowiedzi) —
+  // po wydaniu lista i podpowiedź ilości nie mogą pochodzić sprzed wydania.
+  const [prevActive, setPrevActive] = useState(active);
+  if (prevActive !== active) {
+    setPrevActive(active);
+    if (active) setState(null);
+  }
+  useEffect(() => {
+    if (!orderId || !active) return;
+    const controller = new AbortController();
+    fetch(`/api/v1/orders/${orderId}/to-issue`, { signal: controller.signal })
+      .then(async (res) => {
+        const json = (await res.json().catch(() => null)) as { data?: ToIssueDto[]; error?: { message?: string } } | null;
+        if (!res.ok || !json?.data) {
+          setState({ kind: "error", items: [], orderId, message: json?.error?.message ?? `Błąd (${res.status})` });
+          return;
+        }
+        setState({ kind: "ok", items: json.data, orderId });
+      })
+      .catch((e: Error) => {
+        if (e.name !== "AbortError") setState({ kind: "error", items: [], orderId, message: "Brak połączenia z serwerem" });
+      });
+    return () => controller.abort();
+  }, [orderId, active]);
+  if (!orderId) return { kind: "none" as const, items: [] as ToIssueDto[], message: undefined as string | undefined };
+  if (!state || state.orderId !== orderId) return { kind: "loading" as const, items: [] as ToIssueDto[], message: undefined as string | undefined };
+  return state;
+}
+
+type ToIssueState = ReturnType<typeof useToIssue>;
+
+/** „Do wydania na to zlecenie”: pozycje zapotrzebowania z pozostało > 0; tapnięcie wybiera materiał. */
+function ToIssueList({ state, message, onSelect }: { state: ToIssueState; message: string | null; onSelect: (i: ToIssueDto) => void }) {
+  if (state.kind === "loading") {
+    return <p className="text-muted-foreground">Wczytywanie zapotrzebowania…</p>;
+  }
+  if (state.kind === "error") {
+    return (
+      <p className="rounded-xl bg-muted p-3 text-base text-muted-foreground">
+        Nie udało się wczytać zapotrzebowania ({state.message}). Wyszukaj materiał poniżej.
+      </p>
+    );
+  }
+  if (state.items.length === 0) return null;
+  return (
+    <section aria-label="Do wydania na to zlecenie" className="flex flex-col gap-2">
+      <h3 className="text-lg font-bold">Do wydania na to zlecenie</h3>
+      <ul className="flex flex-col gap-2">
+        {state.items.map((i) => (
+          <li key={i.materialId}>
+            <button type="button" className={BIG_ROW} onClick={() => onSelect(i)}>
+              <span className="flex w-full items-baseline justify-between gap-3">
+                <span className="font-mono text-xl font-bold break-all">{i.materialCode}</span>
+                <span className="shrink-0 text-lg font-bold">{formatQuantityUnit(i.remaining, i.unit)}</span>
+              </span>
+              <span className="text-base text-muted-foreground">{i.materialName}</span>
+              {i.available <= 0 && <span className="text-sm font-semibold text-destructive">brak na stanie</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {message && (
+        <p role="alert" className="rounded-xl bg-destructive/10 p-3 text-base font-medium text-destructive">
+          {message}
+        </p>
+      )}
+      <p className="text-sm text-muted-foreground">Pozostałe materiały wyszukasz poniżej.</p>
+    </section>
   );
 }

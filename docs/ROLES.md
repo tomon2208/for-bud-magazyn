@@ -47,3 +47,7 @@ Uprawnienia muszą być egzekwowane po stronie backendu, nie tylko przez ukrywan
 
 - Korekta stanu i cofnięcie operacji (storno): wyłącznie ADMIN (route handler i funkcja DB; BIURO/PRODUKCJA → 403/42501). Na terminalu przycisk „Koryguj” widzi tylko ADMIN.
 - Historia ruchów `/historia`: ADMIN i BIURO (wszystkie operacje); PRODUKCJA — tylko własne przez API i „Moje ostatnie operacje” na terminalu. Kontrola spójności stanów — ADMIN.
+
+## Uwagi techniczne (Etap 8–10, ADR 013)
+
+- Listy zapotrzebowania zlecenia: tworzą i wycofują BIURO i ADMIN (funkcje DB); czytają wszyscy aktywni. Braki (strona „Braki”, eksport CSV, braki zlecenia): BIURO, ADMIN. Terminal („Do wydania na to zlecenie”): PRODUKCJA, ADMIN.

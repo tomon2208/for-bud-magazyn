@@ -10,7 +10,7 @@ export type ApiResult =
 type ErrorBody = { error?: { code?: string; message?: string; fields?: Record<string, string[]> } };
 
 /** Błędy 409 (duplikat) pokazujemy przy właściwym polu formularza. */
-const CONFLICT_FIELD: Record<string, string> = { CODE_TAKEN: "code", NAME_TAKEN: "name", UNIT_LOCKED: "unit" };
+const CONFLICT_FIELD: Record<string, string> = { CODE_TAKEN: "code", NAME_TAKEN: "name", UNIT_LOCKED: "unit", NUMBER_TAKEN: "number" };
 
 /** Wywołanie API JSON z obsługą błędów sieci i mapowaniem błędów pól (pierwszy komunikat na pole). */
 export async function callApi(url: string, method: "POST" | "PATCH", body: unknown): Promise<ApiResult> {

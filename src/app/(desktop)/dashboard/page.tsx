@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { OPERATION_TYPE_LABELS, formatQuantity, formatQuantityUnit, type OperationType } from "@/lib/validation/stock";
 import { requirePageRole } from "@/server/auth";
 import { getDashboardStats, listBelowMinimum } from "@/server/overview";
+import { getShortageCount } from "@/server/requirements";
 import { listMovements, type MovementDto } from "@/server/stock";
 
 export const metadata: Metadata = { title: "Dashboard — FOR-BUD Magazyn" };
@@ -49,10 +50,11 @@ export default async function DashboardPage() {
   const user = await requirePageRole("ADMIN", "BIURO");
   const db = await createSupabaseServerClient();
   // Trzy lekkie zapytania równolegle; wszystko liczy baza (bez pobierania historii).
-  const [stats, below, recent] = await Promise.all([
+  const [stats, below, recent, shortages] = await Promise.all([
     getDashboardStats(db),
     listBelowMinimum(db, BELOW_MIN_LIMIT),
     listMovements(db, { page: 1, pageSize: RECENT_LIMIT }, { collapseTransfers: true }),
+    getShortageCount(db),
   ]);
 
   const today = stats.ok ? stats.data.operationsToday : {};
@@ -79,6 +81,15 @@ export default async function DashboardPage() {
             value={stats.data.belowMinimum}
             alert={stats.data.belowMinimum > 0}
           />
+          {shortages.ok && (
+            <Tile
+              href="/braki"
+              label="Materiały z brakiem do zleceń"
+              value={shortages.data}
+              alert={shortages.data > 0}
+              hint="Zapotrzebowanie zleceń (Otwarte, W produkcji) ponad stan magazynu."
+            />
+          )}
           <Card className="sm:col-span-2 xl:col-span-4">
             <CardHeader>
               <CardTitle>

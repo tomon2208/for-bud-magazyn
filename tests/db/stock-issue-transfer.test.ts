@@ -28,7 +28,7 @@ let asProdB: SupabaseClient;
 let asProd2B: SupabaseClient;
 let sessions: SupabaseClient[]; // osobne sesje/klienty (każde żądanie = osobne połączenie PostgREST)
 
-const ids = { category: "", order: "", orderDone: "", orderCancelled: "", orderRace: "", orderRace2: "" };
+const ids = { category: "", order: "", orderDone: "", orderCancelled: "", orderInProd: "", orderRace: "", orderRace2: "" };
 const testMaterials: string[] = [];
 const testLocations: string[] = [];
 
@@ -171,6 +171,7 @@ beforeAll(async () => {
   ids.order = await order("Kowalski");
   ids.orderDone = await order("Zakonczone", "DONE");
   ids.orderCancelled = await order("Anulowane", "CANCELLED");
+  ids.orderInProd = await order("WProdukcji", "IN_PRODUCTION");
   ids.orderRace = await order("Wyscig");
   ids.orderRace2 = await order("Wyscig2");
 });
@@ -238,6 +239,20 @@ describe("stock_issue — role i poprawność", () => {
     const op = await admin.from("stock_operations").select("reason_code, reason, production_order_id").eq("id", o.data.operation_id).single();
     expect(op.data).toEqual({ reason_code: "INNY", reason: "pokaz dla klienta", production_order_id: null });
     expect(await stockQty(m, a)).toBe(5);
+  });
+
+  it("zlecenie W PRODUKCJI (IN_PRODUCTION) przyjmuje wydania (Etap 8); DONE/CANCELLED → ORDER_NOT_OPEN", async () => {
+    const mp = await material("INPROD");
+    const ap = await location("IP-A");
+    await receive(mp, ap, 5);
+    const ok = await issue(asProd, { p_location_id: ap, p_material_id: mp, p_quantity: 1, p_production_order_id: ids.orderInProd });
+    expect(ok.error).toBeNull();
+    expect(await stockQty(mp, ap)).toBe(4);
+    for (const orderId of [ids.orderDone, ids.orderCancelled]) {
+      const r = await issue(asProd, { p_location_id: ap, p_material_id: mp, p_quantity: 1, p_production_order_id: orderId });
+      expect(r.error?.hint).toBe("ORDER_NOT_OPEN");
+    }
+    expect(await stockQty(mp, ap)).toBe(4);
   });
 
   it("ułamki: mb 2,25 OK; szt. 0,5 → NOT_INTEGER", async () => {
@@ -702,10 +717,10 @@ describe("odczyty: lista operacji, moje ostatnie, zlecenia", () => {
     expect(i?.quantity).toBeGreaterThan(0);
   });
 
-  it("ostatnio używane otwarte zlecenia i podsumowanie wydań na zlecenie", async () => {
+  it("ostatnio używane zlecenia do wydania (Otwarte, W produkcji) i podsumowanie wydań na zlecenie", async () => {
     const recent = await listRecentOrdersForUser(asProd, tProd.id);
     expect(recent.ok && recent.data.map((o) => o.id)).toContain(ids.order);
-    expect(recent.ok && recent.data.every((o) => o.status === "OPEN")).toBe(true);
+    expect(recent.ok && recent.data.every((o) => o.status === "OPEN" || o.status === "IN_PRODUCTION")).toBe(true);
     const summary = await getOrderIssueSummary(asBiuro, ids.order);
     expect(summary.ok).toBe(true);
     if (!summary.ok) return;
