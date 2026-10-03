@@ -70,6 +70,12 @@ export default async function MaterialDetailsPage({ params }: PageProps<"/materi
             jednostka: {m.unit}
             {m.allowsFraction ? " (ułamki)" : ""}
           </span>
+          {m.barLengthM !== null && (
+            <>
+              <span>·</span>
+              <span>długość sztangi: {formatQuantity(m.barLengthM)} m</span>
+            </>
+          )}
           <span>·</span>
           <span>dostawca: {m.defaultSupplierName ?? "—"}</span>
           {!m.active && <Badge variant="destructive">nieaktywny</Badge>}

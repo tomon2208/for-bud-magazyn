@@ -220,6 +220,8 @@ export type MaterialDto = {
   defaultSupplierName: string | null;
   /** Stan minimalny; null = brak alarmu. */
   minQuantity: number | null;
+  /** Długość sztangi [m] (przeliczanie metrów z importu LiczOkno na sztangi); null = brak. */
+  barLengthM: number | null;
   active: boolean;
   notes: string | null;
   createdAt: string;
@@ -234,6 +236,7 @@ type MaterialRow = {
   allows_fraction: boolean;
   default_supplier_id: string | null;
   min_quantity: number | string | null;
+  bar_length_m: number | string | null;
   active: boolean;
   notes: string | null;
   created_at: string;
@@ -242,7 +245,7 @@ type MaterialRow = {
   supplier: { name: string } | null;
 };
 const MATERIAL_COLUMNS =
-  "id, code, name, category_id, unit, allows_fraction, default_supplier_id, min_quantity, active, notes, created_at, updated_at, " +
+  "id, code, name, category_id, unit, allows_fraction, default_supplier_id, min_quantity, bar_length_m, active, notes, created_at, updated_at, " +
   "category:material_categories(name), supplier:suppliers(name)";
 
 const toMaterial = (r: MaterialRow): MaterialDto => ({
@@ -256,6 +259,7 @@ const toMaterial = (r: MaterialRow): MaterialDto => ({
   defaultSupplierId: r.default_supplier_id,
   defaultSupplierName: r.supplier?.name ?? null,
   minQuantity: r.min_quantity === null ? null : Number(r.min_quantity),
+  barLengthM: r.bar_length_m === null || r.bar_length_m === undefined ? null : Number(r.bar_length_m),
   active: r.active,
   notes: r.notes,
   createdAt: r.created_at,

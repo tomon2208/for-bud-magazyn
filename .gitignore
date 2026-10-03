@@ -27,3 +27,7 @@ coverage/
 .DS_Store
 Thumbs.db
 .dev.vars*
+
+# przykładowe pliki LiczOkno (dane klientów, ceny) — tylko lokalnie
+docs/przykladowy_wzor/
+docs/liczokno-przyklady/

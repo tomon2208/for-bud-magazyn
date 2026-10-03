@@ -13,12 +13,12 @@ type ErrorBody = { error?: { code?: string; message?: string; fields?: Record<st
 const CONFLICT_FIELD: Record<string, string> = { CODE_TAKEN: "code", NAME_TAKEN: "name", UNIT_LOCKED: "unit", NUMBER_TAKEN: "number" };
 
 /** Wywołanie API JSON z obsługą błędów sieci i mapowaniem błędów pól (pierwszy komunikat na pole). */
-export async function callApi(url: string, method: "POST" | "PATCH", body: unknown): Promise<ApiResult> {
+export async function callApi(url: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): Promise<ApiResult> {
   try {
     const res = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.ok) {
       const json = (await res.json().catch(() => null)) as { data?: unknown } | null;

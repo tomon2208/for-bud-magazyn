@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Field, NoticeBox } from "@/components/form-parts";
 import { MaterialPicker, type PickedMaterial } from "@/components/material-picker";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -143,9 +144,14 @@ export function RequirementsSection({
           Zapotrzebowanie
         </h2>
         {canAdd && !form && (
-          <Button type="button" onClick={() => openForm(null)}>
-            Dodaj listę
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => openForm(null)}>
+              Dodaj listę
+            </Button>
+            <Link href={`/zlecenia/${orderId}/import`} className={buttonVariants({ variant: "outline" })}>
+              Importuj z LiczOkno
+            </Link>
+          </div>
         )}
       </div>
       {!canAdd && canEdit && (
@@ -178,9 +184,12 @@ export function RequirementsSection({
             <details key={r.id} className="rounded-xl border p-3" open={active.length === 1}>
               <summary className="cursor-pointer text-sm">
                 <span className="font-semibold">{r.name}</span>{" "}
+                {r.source === "IMPORT" && (
+                  <span className="mr-1 rounded-md bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-900">Import LiczOkno</span>
+                )}
                 <span className="text-muted-foreground">
                   · {r.items.length} {pluralPl(r.items.length, "pozycja", "pozycje", "pozycji")} · {DATE.format(new Date(r.createdAt))}
-                  {r.source === "IMPORT" && ` · import${r.importedFileName ? `: ${r.importedFileName}` : ""}`}
+                  {r.source === "IMPORT" && r.importedFileName && ` · plik: ${r.importedFileName}`}
                 </span>
               </summary>
               <div className="mt-3 space-y-3">

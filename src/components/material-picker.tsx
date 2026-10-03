@@ -13,6 +13,8 @@ export type PickedMaterial = {
   defaultSupplierId: string | null;
   /** Z API materiałów (wyszukiwarka); brak = nieznane. */
   active?: boolean;
+  /** Długość sztangi [m] (kartoteka); brak = nieznana. */
+  barLengthM?: number | null;
 };
 
 type SearchState =

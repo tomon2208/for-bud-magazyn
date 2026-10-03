@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Field, NoticeBox, SELECT_CLASS } from "@/components/form-parts";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -130,9 +130,14 @@ export function OrdersView({ page, filters }: { page: OrderPage<OrderOverviewDto
           }}
         />
       ) : (
-        <Button type="button" onClick={() => (setNotice(null), setEditing("new"))}>
-          Dodaj zlecenie
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={() => (setNotice(null), setEditing("new"))}>
+            Dodaj zlecenie
+          </Button>
+          <Link href="/zlecenia/import" className={buttonVariants({ variant: "outline" })}>
+            Nowe zlecenie z pliku
+          </Link>
+        </div>
       )}
 
       <NoticeBox notice={notice} />

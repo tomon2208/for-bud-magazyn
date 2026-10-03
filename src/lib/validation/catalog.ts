@@ -140,6 +140,50 @@ const minQuantitySchema = z
     return result.value;
   });
 
+export const MAX_BAR_LENGTH_M = 20;
+
+export type BarLengthCheck = { ok: true; value: number | null } | { ok: false; message: string };
+
+/**
+ * Długość sztangi [m] z formularza/JSON (Etap 12a): pusty tekst albo null → null (brak przeliczania); liczba > 0,
+ * ≤ 20, do 3 miejsc po przecinku; przecinek jako separator dziesiętny, spacje ignorowane.
+ */
+export function checkBarLength(raw: unknown): BarLengthCheck {
+  if (raw === null || raw === undefined) return { ok: true, value: null };
+  let text: string;
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return { ok: false, message: "Długość sztangi musi być liczbą" };
+    text = String(raw);
+  } else if (typeof raw === "string") {
+    text = raw.replace(/[\s\u00a0\u202f]/g, "").replace(",", ".").replace(/(\d)\.$/, "$1");
+  } else {
+    return { ok: false, message: "Długość sztangi musi być liczbą" };
+  }
+  if (text === "") return { ok: true, value: null };
+  const match = /^(\d*)(?:\.(\d+))?$/.exec(text);
+  if (!match || (match[1] === "" && match[2] === undefined)) {
+    return { ok: false, message: "Długość sztangi musi być liczbą, np. 6 albo 6,5" };
+  }
+  if ((match[2] ?? "").replace(/0+$/, "").length > 3) {
+    return { ok: false, message: "Długość sztangi może mieć maksymalnie 3 miejsca po przecinku" };
+  }
+  const value = Number(text);
+  if (!(value > 0)) return { ok: false, message: "Długość sztangi musi być większa od zera" };
+  if (value > MAX_BAR_LENGTH_M) return { ok: false, message: `Długość sztangi może wynosić maksymalnie ${MAX_BAR_LENGTH_M} m` };
+  return { ok: true, value };
+}
+
+const barLengthSchema = z
+  .union([z.string(), z.number(), z.null()], { error: "Długość sztangi musi być liczbą" })
+  .transform((v, ctx) => {
+    const result = checkBarLength(v);
+    if (!result.ok) {
+      ctx.addIssue({ code: "custom", message: result.message });
+      return z.NEVER;
+    }
+    return result.value;
+  });
+
 const MIN_NOT_INTEGER = {
   error: "Ten materiał liczy się w całych jednostkach — stan minimalny musi być liczbą całkowitą",
   path: ["min_quantity"],
@@ -158,6 +202,7 @@ export const createMaterialSchema = z
     allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
     min_quantity: minQuantitySchema.optional(),
+    bar_length_m: barLengthSchema.optional(),
     notes: optionalText("Uwagi", 2000).optional(),
   })
   .strict()
@@ -173,6 +218,7 @@ export const updateMaterialSchema = z
     allows_fraction: allowsFractionSchema.optional(),
     default_supplier_id: idSchema("Nieprawidłowy dostawca").nullable().optional(),
     min_quantity: minQuantitySchema.optional(),
+    bar_length_m: barLengthSchema.optional(),
     notes: optionalText("Uwagi", 2000).optional(),
     active: activeSchema.optional(),
   })

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Field, NoticeBox, SELECT_CLASS } from "@/components/form-parts";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -95,8 +95,19 @@ export function MaterialsView({
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        {canEdit &&
+          !editing && (
+            <Button type="button" onClick={() => (setNotice(null), setEditing("new"))}>
+              Dodaj materiał
+            </Button>
+          )}
+        <Link href="/materialy/powiazania-liczokno" className={buttonVariants({ variant: "outline" })}>
+          Powiązania kodów LiczOkno
+        </Link>
+      </div>
       {canEdit &&
-        (editing ? (
+        editing && (
           <MaterialForm
             key={editing === "new" ? "new" : editing.id}
             material={editing === "new" ? null : editing}
@@ -117,11 +128,7 @@ export function MaterialsView({
               return result;
             }}
           />
-        ) : (
-          <Button type="button" onClick={() => (setNotice(null), setEditing("new"))}>
-            Dodaj materiał
-          </Button>
-        ))}
+        )}
 
       <NoticeBox notice={notice} />
 
@@ -180,6 +187,7 @@ export function MaterialsView({
                 <TableHead>Jednostka</TableHead>
                 <TableHead>Domyślny dostawca</TableHead>
                 <TableHead className="text-right">Minimum</TableHead>
+                <TableHead className="text-right">Sztanga [m]</TableHead>
                 <TableHead>Status</TableHead>
                 {canEdit && <TableHead className="text-right">Akcje</TableHead>}
               </TableRow>
@@ -202,6 +210,7 @@ export function MaterialsView({
                   <TableCell className="text-right whitespace-nowrap">
                     {m.minQuantity === null ? "—" : formatQuantity(m.minQuantity)}
                   </TableCell>
+                  <TableCell className="text-right whitespace-nowrap">{m.barLengthM === null ? "—" : formatQuantity(m.barLengthM)}</TableCell>
                   <TableCell>
                     {m.active ? <Badge variant="secondary">aktywny</Badge> : <Badge variant="destructive">nieaktywny</Badge>}
                   </TableCell>
@@ -295,6 +304,8 @@ function MaterialForm({
       default_supplier_id: supplier === "" ? null : supplier,
       // Pusty tekst → null (brak alarmu); przecinek dziesiętny akceptuje schemat.
       min_quantity: form.get("min_quantity"),
+      // Pusty tekst → null (brak przeliczania); przecinek dziesiętny akceptuje schemat.
+      bar_length_m: form.get("bar_length_m"),
       notes: form.get("notes"),
     });
     if (!parsed.success) {
@@ -400,6 +411,18 @@ function MaterialForm({
               autoComplete="off"
               placeholder="puste = bez alarmu"
               aria-invalid={!!errors.min_quantity}
+            />
+          </Field>
+          <Field id="mat-bar" label="Długość sztangi [m] (opcjonalnie)" error={errors.bar_length_m}>
+            <Input
+              id="mat-bar"
+              name="bar_length_m"
+              defaultValue={material?.barLengthM == null ? "" : String(material.barLengthM).replace(".", ",")}
+              inputMode="decimal"
+              maxLength={8}
+              autoComplete="off"
+              placeholder="np. 6,5 — dla importu LiczOkno"
+              aria-invalid={!!errors.bar_length_m}
             />
           </Field>
           <Field id="mat-notes" label="Uwagi" error={errors.notes} className="sm:col-span-2 lg:col-span-4">

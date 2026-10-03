@@ -17,6 +17,7 @@ const NOT_FOUND_MESSAGES: Record<string, string> = {
   order: "Nie znaleziono zlecenia",
   material: "Nie znaleziono materiału",
   requirement: "Nie znaleziono listy zapotrzebowania",
+  alias: "Nie znaleziono powiązania",
 };
 
 /** Błąd z funkcji zapotrzebowania/braków → błąd API (bez ujawniania szczegółów bazy). `details` = kod materiału itp. */
@@ -54,6 +55,10 @@ export function mapRequirementError(error: DbError, context: string): ServiceErr
         };
       case "MATERIAL_INACTIVE":
         return { status: 400, code: "MATERIAL_INACTIVE", message: `Materiał${material ? ` ${material}` : ""} jest nieaktywny`, material };
+      case "NUMBER_TAKEN":
+        return { status: 409, code: "NUMBER_TAKEN", message: "Zlecenie o tym numerze już istnieje" };
+      case "INVALID_CODE":
+        return { status: 400, code: "INVALID_CODE", message: "Kod zawiera niedozwolone znaki (dozwolone: A–Z, cyfry, . _ / - i pojedyncze spacje) albo jest za długi" };
       case "TOO_MANY_ROWS":
         return { status: 400, code: "TOO_MANY_ROWS", message: "Zbyt wiele wierszy do eksportu (maks. 20 000) — zawęź filtry" };
       case "VALIDATION":
