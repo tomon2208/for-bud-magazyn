@@ -326,8 +326,8 @@ export const OPERATION_TYPE_LABELS: Record<OperationType, string> = {
   INVENTORY: "Inwentaryzacja",
   REVERSAL: "Cofnięcie",
 };
-/** Typy do wyboru w filtrze historii (inwentaryzacja — Etap 13). */
-export const HISTORY_TYPES: OperationType[] = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "REVERSAL"];
+/** Typy do wyboru w filtrze historii. */
+export const HISTORY_TYPES: OperationType[] = ["RECEIPT", "ISSUE", "TRANSFER", "ADJUSTMENT", "INVENTORY", "REVERSAL"];
 
 const dateParam = z
   .string()

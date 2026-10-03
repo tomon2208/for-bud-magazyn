@@ -4,6 +4,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatQuantityUnit, issueReasonLabel, reasonLabel } from "@/lib/validation/stock";
 import { requirePageRole } from "@/server/auth";
+import { listInventorySessions } from "@/server/inventory";
 import { listMyRecentOperations, type MyOperationDto } from "@/server/stock";
 import { PendingOperationsBanner } from "./pending-banner";
 
@@ -34,7 +35,12 @@ function describe(op: MyOperationDto): string {
 export default async function MobileHomePage() {
   const user = await requirePageRole("PRODUKCJA", "ADMIN");
   const since = last24h();
-  const mine = await listMyRecentOperations(await createSupabaseServerClient(), user.id, { since, limit: 10 });
+  const db = await createSupabaseServerClient();
+  const [mine, sessions] = await Promise.all([
+    listMyRecentOperations(db, user.id, { since, limit: 10 }),
+    listInventorySessions(db, "OPEN"),
+  ]);
+  const openSessions = sessions.ok ? sessions.data.length : 0;
 
   return (
     <div className="flex flex-1 flex-col gap-4 p-4">
@@ -75,9 +81,19 @@ export default async function MobileHomePage() {
         <Link href="/m/lokalizacje" className={`${TILE_SMALL} bg-background active:bg-muted`}>
           LOKALIZACJE
         </Link>
-        <Link href="/m/szukaj" className={`${TILE_SMALL} col-span-2 bg-background active:bg-muted`}>
+        <Link href="/m/szukaj" className={`${TILE_SMALL} bg-background active:bg-muted`}>
           SZUKAJ
         </Link>
+        {openSessions > 0 ? (
+          <Link href="/m/inwentaryzacja" className={`${TILE_SMALL} border-teal-600 bg-teal-50 text-teal-950 active:bg-teal-100`}>
+            INWENTARYZACJA
+          </Link>
+        ) : (
+          <div aria-disabled="true" className={`${TILE_SMALL} bg-muted text-muted-foreground`}>
+            INWENTARYZACJA
+            <span className="text-xs font-normal">brak otwartej sesji</span>
+          </div>
+        )}
       </div>
 
       <section className="rounded-2xl border bg-background p-4">

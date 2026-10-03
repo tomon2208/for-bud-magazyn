@@ -628,6 +628,9 @@ export type MovementDto = {
   reversedReason: string | null;
   /** Czy ADMIN może cofnąć (nie storno i jeszcze nie cofnięta). Brak stanu sprawdza dopiero baza. */
   reversible: boolean;
+  /** Tylko INVENTORY (Etap 13): sesja inwentaryzacji. */
+  inventorySessionId: string | null;
+  inventorySessionName: string | null;
 };
 type MovementRow = {
   movement_id: string;
@@ -659,6 +662,8 @@ type MovementRow = {
   reversed_by_user_name?: string | null;
   reversed_reason?: string | null;
   reversible?: boolean;
+  inventory_session_id?: string | null;
+  inventory_session_name?: string | null;
 };
 
 export type MovementPage = { items: MovementDto[]; total: number; page: number; pageSize: number };
@@ -725,6 +730,8 @@ export async function listMovements(
         reversedByUserName: r.reversed_by_user_name ?? null,
         reversedReason: r.reversed_reason ?? null,
         reversible: r.reversible === true,
+        inventorySessionId: r.inventory_session_id ?? null,
+        inventorySessionName: r.inventory_session_name ?? null,
       })),
     },
   };

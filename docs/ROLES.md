@@ -56,3 +56,8 @@ Uprawnienia muszą być egzekwowane po stronie backendu, nie tylko przez ukrywan
 
 - Rezerwacje: tworzą i zwalniają BIURO i ADMIN (funkcje DB; PRODUKCJA → 403/42501). Dostępność z rezerwacjami widzą wszyscy aktywni.
 - Wydanie mimo rezerwacji innych zleceń (override z powodem): wyłącznie ADMIN (route handler 403 + funkcja DB 42501).
+
+## Uwagi techniczne (Etap 13, ADR 015)
+
+- Inwentaryzacja: sesje tworzą, zamykają i anulują BIURO i ADMIN. Liczą PRODUKCJA i ADMIN (terminal) — „na ślepo”: ekran liczenia i API inwentaryzacji nie pokazują liczącemu stanu systemowego ani różnic (pozostałe ekrany terminala nadal pokazują stany — RLS na `stock` bez zmian).
+- **Świadomy wyjątek od „BIURO — brak ręcznych korekt stocku”**: różnice inwentaryzacji zatwierdza BIURO lub ADMIN (decyzja użytkownika 2026-10-03). Każda zatwierdzona różnica to ruch `INVENTORY` w historii z użytkownikiem zatwierdzającym i powiązaniem z sesją; zgodne pozycje bez ruchu. Ręczna korekta (`stock_adjust`) i storno (w tym operacji INVENTORY) nadal wyłącznie ADMIN.

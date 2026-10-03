@@ -52,7 +52,7 @@ const TYPE_BADGE: Record<string, string> = {
   TRANSFER: "bg-violet-100 text-violet-900",
   ADJUSTMENT: "bg-amber-100 text-amber-900",
   REVERSAL: "bg-rose-100 text-rose-900",
-  INVENTORY: "bg-muted",
+  INVENTORY: "bg-teal-100 text-teal-900",
 };
 const typeLabel = (t: string | null) => (t && t in OPERATION_TYPE_LABELS ? OPERATION_TYPE_LABELS[t as OperationType] : (t ?? ""));
 
@@ -330,6 +330,12 @@ function Details({ m }: { m: MovementDto }) {
         Powód cofnięcia: {m.reason}
         {order && <div>{order}</div>}
       </span>
+    );
+  } else if (m.type === "INVENTORY" && m.inventorySessionId) {
+    main = (
+      <Link href={`/inwentaryzacja/${m.inventorySessionId}`} className="underline-offset-4 hover:underline">
+        Sesja: {m.inventorySessionName}
+      </Link>
     );
   }
   return (

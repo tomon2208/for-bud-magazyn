@@ -163,7 +163,7 @@ export const submitReversal = (payload: ReversalPayload) =>
     "Sesja wygasła — zaloguj się; cofnięcie zostanie dokończone.",
   );
 
-async function postStockOperation<T>(url: string, payload: unknown, authMessage: string): Promise<SubmitResult<T>> {
+export async function postStockOperation<T>(url: string, payload: unknown, authMessage: string): Promise<SubmitResult<T>> {
   let res: Response;
   try {
     res = await fetch(url, {
