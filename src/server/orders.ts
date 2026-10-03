@@ -166,6 +166,8 @@ export type OrderIssueSummaryDto = {
   issues: number;
   /** Liczba cofniętych wydań (storno). */
   reversals: number;
+  /** Etap 12b: wiersz wydań zamiennika — materiał z zapotrzebowania, za który wydano (null — zwykłe wydania). */
+  substituteFor: { materialId: string; code: string; name: string } | null;
 };
 type SummaryRow = {
   material_id: string;
@@ -175,6 +177,9 @@ type SummaryRow = {
   quantity: number | string;
   issues: number;
   reversals?: number;
+  substitute_for_id?: string | null;
+  substitute_for_code?: string | null;
+  substitute_for_name?: string | null;
 };
 
 /**
@@ -194,6 +199,9 @@ export async function getOrderIssueSummary(db: Db, orderId: string): Promise<Ser
       quantity: Number(r.quantity),
       issues: Number(r.issues),
       reversals: Number(r.reversals ?? 0),
+      substituteFor: r.substitute_for_id
+        ? { materialId: r.substitute_for_id, code: r.substitute_for_code ?? "", name: r.substitute_for_name ?? "" }
+        : null,
     })),
   };
 }

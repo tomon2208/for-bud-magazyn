@@ -271,3 +271,9 @@ export function likeContains(term: string): string {
 export function buildIlikeContainsValue(term: string): string {
   return `"${likeContains(term).replace(/[\\"]/g, "\\$&")}"`;
 }
+
+/** POST /api/v1/materials/[id]/substitutes — dodanie odpowiednika (Etap 12b; ADMIN). */
+export const addSubstituteSchema = z
+  .object({ substitute_id: z.uuid({ error: "Wybierz odpowiednik" }) })
+  .strict();
+export type AddSubstituteInput = z.infer<typeof addSubstituteSchema>;

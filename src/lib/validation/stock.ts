@@ -140,9 +140,18 @@ export const issueSchema = z
     // Etap 11: wydanie mimo rezerwacji innych zleceń — tylko ADMIN (route handler → 403, funkcja DB → 42501).
     override_reservations: z.boolean({ error: "Nieprawidłowa wartość" }).optional(),
     override_reason: optionalText("Powód wydania mimo rezerwacji", MAX_REASON_LENGTH).optional(),
+    // Etap 12b: wydanie zamiennika — materiał z zapotrzebowania zlecenia (XXX), za który wydajemy material_id (YYY).
+    // Brak = zwykłe wydanie (baza NIE przypisuje zamiennika sama — podpowiedź jest w UI, ADR 017 H1).
+    substitute_for: z.uuid({ error: "Nieprawidłowy materiał oryginalny" }).nullable().optional(),
   })
   .strict()
   .superRefine((v, ctx) => {
+    if (v.substitute_for && !v.production_order_id) {
+      ctx.addIssue({ code: "custom", path: ["substitute_for"], message: "Zamiennik wskazuje się tylko przy wydaniu na zlecenie" });
+    }
+    if (v.substitute_for && v.substitute_for === v.material_id) {
+      ctx.addIssue({ code: "custom", path: ["substitute_for"], message: "Zamiennik musi być innym materiałem niż oryginał" });
+    }
     if (v.override_reservations && (!v.override_reason || v.override_reason.length < MIN_OVERRIDE_REASON_LENGTH)) {
       ctx.addIssue({ code: "custom", path: ["override_reason"], message: "Podaj powód wydania mimo rezerwacji (min. 3 znaki)" });
     }

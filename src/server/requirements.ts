@@ -1,7 +1,13 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fileTimestamp } from "@/lib/csv";
-import type { CreateRequirementInput, ShortagesQuery, WithdrawRequirementInput } from "@/lib/validation/requirements";
+import { parseSubstitutes, type SubstituteOption } from "@/lib/substitutes";
+import type {
+  CreateRequirementInput,
+  ShortagesQuery,
+  SubstituteRequirementInput,
+  WithdrawRequirementInput,
+} from "@/lib/validation/requirements";
 import type { ServiceError, ServiceResult } from "./users";
 
 // Zapotrzebowanie zlecenia (listy niezmienne, sumowane) i braki (Etap 8–10, ADR 013).
@@ -61,6 +67,17 @@ export function mapRequirementError(error: DbError, context: string): ServiceErr
         return { status: 400, code: "INVALID_CODE", message: "Kod zawiera niedozwolone znaki (dozwolone: A–Z, cyfry, . _ / - i pojedyncze spacje) albo jest za długi" };
       case "TOO_MANY_ROWS":
         return { status: 400, code: "TOO_MANY_ROWS", message: "Zbyt wiele wierszy do eksportu (maks. 20 000) — zawęź filtry" };
+      case "NOT_A_SUBSTITUTE":
+        return { status: 400, code: "NOT_A_SUBSTITUTE", message: "Wybrane materiały nie są odpowiednikami" };
+      case "NOT_IN_REQUIREMENTS":
+        return {
+          status: 400,
+          code: "NOT_IN_REQUIREMENTS",
+          message: `Materiał${material ? ` ${material}` : ""} nie występuje na tej liście zapotrzebowania`,
+          material,
+        };
+      case "NOTHING_TO_SUBSTITUTE":
+        return { status: 409, code: "NOTHING_TO_SUBSTITUTE", message: "Ta pozycja jest już w całości wydana — nie ma czego podmieniać" };
       case "VALIDATION":
         return { status: 400, code: "VALIDATION", message: "Nieprawidłowe dane" };
     }
@@ -190,6 +207,54 @@ export async function withdrawRequirement(
   return { ok: true, data: { requirementId } };
 }
 
+export type SubstitutedRequirementDto = {
+  requirementId: string;
+  orderId: string;
+  withdrawnRequirementId: string;
+  /** Ilość przeniesiona na odpowiednik (null przy powtórzeniu żądania). */
+  movedQuantity: number | null;
+  /** Część oryginału już wydana — zostaje na kopii listy jako oryginał. */
+  keptQuantity: number | null;
+  idempotentReplay: boolean;
+};
+
+/**
+ * „Podmień” (Etap 12b): pozycja listy → odpowiednik. Atomowo w bazie: wycofanie listy + poprawiona kopia. BIURO, ADMIN.
+ */
+export async function substituteRequirementItem(
+  db: Db,
+  requirementId: string,
+  input: SubstituteRequirementInput,
+): Promise<ServiceResult<SubstitutedRequirementDto>> {
+  const { data, error } = await db.rpc("substitute_requirement_item", {
+    p_client_request_id: input.client_request_id,
+    p_requirement_id: requirementId,
+    p_from_material: input.from_material_id,
+    p_to_material: input.to_material_id,
+    p_reason: input.reason ?? null,
+  });
+  if (error || !data) return { ok: false, error: mapRequirementError(error ?? {}, "substituteRequirementItem") };
+  const r = data as {
+    requirement_id: string;
+    order_id: string;
+    withdrawn_requirement_id: string;
+    moved_quantity?: number | string;
+    kept_quantity?: number | string;
+    idempotent_replay: boolean;
+  };
+  return {
+    ok: true,
+    data: {
+      requirementId: r.requirement_id,
+      orderId: r.order_id,
+      withdrawnRequirementId: r.withdrawn_requirement_id,
+      movedQuantity: r.moved_quantity === undefined ? null : Number(r.moved_quantity),
+      keptQuantity: r.kept_quantity === undefined ? null : Number(r.kept_quantity),
+      idempotentReplay: r.idempotent_replay === true,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Braki
 // ---------------------------------------------------------------------------
@@ -208,6 +273,8 @@ export type OrderShortageDto = {
   reserved: number;
   /** Wolne w magazynie (wspólne dla wszystkich zleceń). */
   free: number;
+  /** Etap 12b: aktywne odpowiedniki; available = wolne + rezerwacja TEGO zlecenia na odpowiednik. */
+  substitutes: SubstituteOption[];
 };
 type OrderShortageRow = {
   material_id: string;
@@ -221,6 +288,7 @@ type OrderShortageRow = {
   shortage: number | string;
   reserved: number | string;
   free: number | string;
+  substitutes?: unknown;
 };
 
 /** Braki jednego zlecenia (ADMIN, BIURO). */
@@ -241,6 +309,7 @@ export async function getOrderShortages(db: Db, orderId: string): Promise<Servic
       shortage: Number(r.shortage),
       reserved: Number(r.reserved),
       free: Number(r.free),
+      substitutes: parseSubstitutes(r.substitutes),
     })),
   };
 }
@@ -261,6 +330,8 @@ export type ShortageDto = {
   available: number;
   shortage: number;
   orders: ShortageOrderRef[];
+  /** Etap 12b: aktywne odpowiedniki z wolnym stanem (bez rezerwacji zleceń — wolne wspólne). */
+  substitutes: SubstituteOption[];
 };
 type ShortageRow = {
   material_id: string;
@@ -276,6 +347,7 @@ type ShortageRow = {
   shortage: number | string;
   orders: { order_id: string; number: string | null; name: string; remaining: number | string }[];
   total_rows: number | string;
+  substitutes?: unknown;
 };
 
 /** Braki zbiorczo per materiał (ADMIN, BIURO): dostawca → największy brak. `total` > items.length = obcięte (limit 2000). */
@@ -304,6 +376,7 @@ export async function listShortages(db: Db, q: ShortagesQuery): Promise<ServiceR
         available: Number(r.available),
         shortage: Number(r.shortage),
         orders: (r.orders ?? []).map((o) => ({ orderId: o.order_id, number: o.number, name: o.name, remaining: Number(o.remaining) })),
+        substitutes: parseSubstitutes(r.substitutes),
       })),
     },
   };
@@ -349,6 +422,8 @@ export type ToIssueDto = {
   available: number;
   /** Rezerwacja tego zlecenia (część „available”). */
   reserved: number;
+  /** Etap 12b: aktywne odpowiedniki; available = wolne + rezerwacja tego zlecenia na odpowiednik. */
+  substitutes: SubstituteOption[];
 };
 type ToIssueRow = {
   material_id: string;
@@ -359,6 +434,7 @@ type ToIssueRow = {
   remaining: number | string;
   available: number | string;
   reserved: number | string;
+  substitutes?: unknown;
 };
 
 /** Pozycje zlecenia z „pozostało do wydania” > 0 (każda rola z dostępem do magazynu). */
@@ -376,6 +452,7 @@ export async function getOrderToIssue(db: Db, orderId: string): Promise<ServiceR
       remaining: Number(r.remaining),
       available: Number(r.available),
       reserved: Number(r.reserved ?? 0),
+      substitutes: parseSubstitutes(r.substitutes),
     })),
   };
 }

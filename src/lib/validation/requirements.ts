@@ -64,6 +64,29 @@ export const withdrawRequirementSchema = z
   .strict();
 export type WithdrawRequirementInput = z.infer<typeof withdrawRequirementSchema>;
 
+export const MAX_SUBSTITUTE_REASON_LENGTH = 200;
+
+/** POST /api/v1/requirements/[id]/substitute — „Podmień” pozycję listy na odpowiednik (Etap 12b). */
+export const substituteRequirementSchema = z
+  .object({
+    client_request_id: z.uuid({ error: "Nieprawidłowy identyfikator żądania" }),
+    from_material_id: z.uuid({ error: "Wybierz materiał z listy" }),
+    to_material_id: z.uuid({ error: "Wybierz odpowiednik" }),
+    reason: z
+      .string({ error: "Powód: nieprawidłowa wartość" })
+      .trim()
+      .max(MAX_SUBSTITUTE_REASON_LENGTH, { error: `Powód: maksymalnie ${MAX_SUBSTITUTE_REASON_LENGTH} znaków` })
+      .transform((v) => (v === "" ? null : v))
+      .nullable()
+      .optional(),
+  })
+  .strict()
+  .refine((v) => v.from_material_id !== v.to_material_id, {
+    path: ["to_material_id"],
+    message: "Odpowiednik musi być innym materiałem",
+  });
+export type SubstituteRequirementInput = z.infer<typeof substituteRequirementSchema>;
+
 const boolParam = z
   .enum(["true", "false", "1", "0"])
   .optional()

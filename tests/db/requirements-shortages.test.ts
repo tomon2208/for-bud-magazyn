@@ -615,13 +615,13 @@ describe("braki zbiorczo i CSV", () => {
     if (!res.ok) return;
     expect(res.data.filename).toBe("braki_2026-10-03_1205.csv");
     const lines = res.data.body.split("\r\n");
-    expect(lines[0]).toBe("Dostawca;Kod materiału;Nazwa materiału;Kategoria;Jednostka;Pozostało do wydania;Dostępne;Brakuje;Zlecenia");
+    expect(lines[0]).toBe("Dostawca;Kod materiału;Nazwa materiału;Kategoria;Jednostka;Pozostało do wydania;Dostępne;Brakuje;Zlecenia;Odpowiedniki na stanie");
     expect(lines[lines.length - 1]).toBe("");
     // Największy brak pierwszy (ZX: 6), potem ZFRAC (1,25).
     expect(lines[1]).toBe(
-      `${P}-dostawcaZ;${P}-ZX;Materiał ZX;${P}-kat;szt.;12;6;6;Z-${RUN}/A ${P}-Z1 (4), ${P}-Z2 (8)`,
+      `${P}-dostawcaZ;${P}-ZX;Materiał ZX;${P}-kat;szt.;12;6;6;Z-${RUN}/A ${P}-Z1 (4), ${P}-Z2 (8);`, // Etap 12b: pusta kolumna „Odpowiedniki na stanie”
     );
-    expect(lines[2]).toBe(`${P}-dostawcaZ;${P}-ZFRAC;"'=HYPERLINK(""x"")";${P}-kat;mb;2,5;1,25;1,25;Z-${RUN}/A ${P}-Z1 (2,5)`);
+    expect(lines[2]).toBe(`${P}-dostawcaZ;${P}-ZFRAC;"'=HYPERLINK(""x"")";${P}-kat;mb;2,5;1,25;1,25;Z-${RUN}/A ${P}-Z1 (2,5);`);
     expect(lines).toHaveLength(4);
     expect(res.data.body).not.toContain("﻿"); // BOM dokleja route handler
   });
@@ -629,7 +629,7 @@ describe("braki zbiorczo i CSV", () => {
   it("CSV: bez wyników tylko nagłówek; brak dostawcy = „brak dostawcy”", async () => {
     const empty = await asBiuro.rpc("export_shortages_csv", { p_supplier_id: randomUUID(), p_only_short: true });
     expect(empty.error).toBeNull();
-    expect(empty.data).toBe("Dostawca;Kod materiału;Nazwa materiału;Kategoria;Jednostka;Pozostało do wydania;Dostępne;Brakuje;Zlecenia\r\n");
+    expect(empty.data).toBe("Dostawca;Kod materiału;Nazwa materiału;Kategoria;Jednostka;Pozostało do wydania;Dostępne;Brakuje;Zlecenia;Odpowiedniki na stanie\r\n");
     const noSup = await material("ZNOSUP", "szt.", { default_supplier_id: null, category_id: ids.category2 });
     const oN = await order("Z5");
     await requirement(oN, "L", [{ material_id: noSup, quantity: 2 }]);

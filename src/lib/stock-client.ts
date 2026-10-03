@@ -29,6 +29,10 @@ export type IssueResponse = {
   /** Etap 11: ile zużyto z rezerwacji zlecenia; rezerwacje innych zleceń zabrane przy wydaniu ADMIN-a mimo rezerwacji. */
   reservationConsumed?: number;
   reservationsOverridden?: { orderId: string; quantity: number }[];
+  /** Etap 12b: wydanie zamiennika — materiał z zapotrzebowania, za który wydano (wskazany jawnie). */
+  substituteFor?: { materialId: string; code: string; name: string } | null;
+  /** Ile zdjęto z rezerwacji oryginału na tym zleceniu. */
+  substituteReservationReleased?: number;
   idempotentReplay: boolean;
 };
 
@@ -65,6 +69,8 @@ export type IssuePayload = {
   /** Etap 11: wydanie mimo rezerwacji innych zleceń — tylko ADMIN, z powodem. */
   override_reservations?: boolean;
   override_reason?: string | null;
+  /** Etap 12b: zamiennik za materiał z zapotrzebowania zlecenia (brak — zwykłe wydanie). */
+  substitute_for?: string | null;
 };
 
 export type TransferPayload = {

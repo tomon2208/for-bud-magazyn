@@ -341,6 +341,12 @@ function Details({ m }: { m: MovementDto }) {
   return (
     <div className="text-sm">
       {main}
+      {m.substituteForCode && (
+        <div className="text-xs font-medium text-amber-800">
+          Zamiennik za {m.substituteForCode}
+          {m.substituteForName ? ` (${m.substituteForName})` : ""}
+        </div>
+      )}
       {m.note && <div className="text-xs text-muted-foreground">Notatka: {m.note}</div>}
     </div>
   );
@@ -413,7 +419,7 @@ function describeEffect(m: MovementDto): string {
   return endSentence(
     m.quantityDelta > 0
       ? `Stan w ${m.locationCode} zmniejszy się o ${qty} ${m.unit}`
-      : `Stan w ${m.locationCode} zwiększy się o ${qty} ${m.unit}${m.productionOrderName ? `; wydanie na zlecenie ${m.productionOrderName} zostanie pomniejszone` : ""}`,
+      : `Stan w ${m.locationCode} zwiększy się o ${qty} ${m.unit}${m.productionOrderName ? `; wydanie na zlecenie ${m.productionOrderName} zostanie pomniejszone${m.substituteForCode ? ` (zamiennik za ${m.substituteForCode} — „pozostało” ${m.substituteForCode} wzrośnie)` : ""}` : ""}`,
   );
 }
 

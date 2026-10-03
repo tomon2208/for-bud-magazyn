@@ -19,7 +19,13 @@ export type IssueTarget =
 type ContextOf<K extends OperationKind> = K extends "RECEIPT"
   ? { location: PendingLocation; material: PickedMaterial; supplierName: string | null }
   : K extends "ISSUE"
-    ? { location: PendingLocation; material: PickedMaterial; target: IssueTarget }
+    ? {
+        location: PendingLocation;
+        material: PickedMaterial;
+        target: IssueTarget;
+        /** Etap 12b: wydanie zamiennika — oryginał z zapotrzebowania (zgodny z payload.substitute_for). */
+        substituteFor?: { id: string; code: string; name: string } | null;
+      }
     : { from: PendingLocation; to: PendingLocation; material: PickedMaterial };
 
 export type PendingOperation<K extends OperationKind = OperationKind> = {
@@ -85,6 +91,10 @@ export function parsePending<K extends OperationKind>(
     } else {
       return null;
     }
+    // Zamiennik: kontekst (co pokazujemy) musi odpowiadać temu, co zostanie wysłane.
+    const sf = c.substituteFor;
+    const sfId = isObj(sf) && isStr(sf.id) && isStr(sf.code) ? sf.id : null;
+    if ((sf !== undefined && sf !== null && sfId === null) || sfId !== (ip.substitute_for ?? null)) return null;
   } else {
     const tp = p as TransferPayload;
     if (!isLoc(c.from, tp.from_location_id) || !isLoc(c.to, tp.to_location_id)) return null;

@@ -1,3 +1,4 @@
+import { type SubstituteOption } from "@/lib/substitutes";
 import { checkQuantity } from "@/lib/validation/stock";
 import { cut, normalizeUnit, numberText, round3, type AggregatedItem } from "./normalize";
 
@@ -14,6 +15,10 @@ export type ResolvedMaterial = {
   /** Długość sztangi [m] — pozwala przeliczyć metry z pliku na sztangi. */
   barLengthM: number | null;
   active: boolean;
+  /** Etap 12b: wolne w magazynie (z resolve_import_codes; brak dla materiału z wyszukiwarki). */
+  free?: number;
+  /** Etap 12b: aktywne odpowiedniki z wolnym stanem. */
+  substitutes?: SubstituteOption[];
 };
 
 export type CodeResolutionStatus = "ALIAS_MAP" | "IGNORED" | "MATERIAL" | "UNKNOWN";
@@ -316,4 +321,20 @@ export function buildImportItems(preview: readonly PreviewItem[]): { items: Impo
     items.push({ material_id: materialId, quantity, raw_source_ref: truncate(refs.join(" | "), MAX_RAW_SOURCE_REF) });
   }
   return { items, merged };
+}
+
+const plQty = (n: number) => n.toLocaleString("pl-PL", { maximumFractionDigits: 3 });
+
+/**
+ * Etap 12b — informacja (nie blokada) przy pozycji gotowej, gdy ilość na listę > wolne: „Na stanie wolne: N —
+ * odpowiednik YYY: M” (tylko odpowiedniki z wolnym > 0). Podmiana odbywa się po zapisie, w Brakach zlecenia.
+ * null — brak informacji (pozycja niegotowa, wolne nieznane albo wystarczające).
+ */
+export function availabilityInfo(item: Pick<PreviewItem, "ready" | "quantity" | "material">): string | null {
+  const m = item.material;
+  if (!item.ready || item.quantity === null || !m || m.free === undefined || item.quantity <= m.free) return null;
+  const subs = (m.substitutes ?? []).filter((s) => s.free > 0);
+  const base = `Na stanie wolne: ${plQty(m.free)} ${m.unit}`;
+  if (subs.length === 0) return base;
+  return `${base} — ${subs.length === 1 ? "odpowiednik" : "odpowiedniki"} ${subs.map((s) => `${s.code}: ${plQty(s.free)} ${s.unit}`).join(", ")} (podmiana po zapisie — w Brakach zlecenia)`;
 }

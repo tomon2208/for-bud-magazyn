@@ -182,7 +182,7 @@ export type OrderReservationDto = {
 export type ReservationEventDto = {
   id: string;
   createdAt: string;
-  type: "RESERVE" | "RELEASE" | "CONSUME" | "OVERRIDE" | "AUTO_RELEASE";
+  type: "RESERVE" | "RELEASE" | "CONSUME" | "OVERRIDE" | "AUTO_RELEASE" | "SUBSTITUTE_RELEASE";
   materialId: string;
   materialCode: string;
   unit: string;

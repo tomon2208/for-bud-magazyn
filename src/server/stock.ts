@@ -56,6 +56,7 @@ const HINTS: Record<string, ServiceError> = {
   NO_CHANGE: { status: 409, code: "NO_CHANGE", message: "Stan się zgadza — brak korekty" },
   ALREADY_REVERSED: { status: 409, code: "ALREADY_REVERSED", message: "Ta operacja została już cofnięta" },
   NOT_REVERSIBLE: { status: 409, code: "NOT_REVERSIBLE", message: "Nie można cofnąć cofnięcia" },
+  NOT_A_SUBSTITUTE: { status: 400, code: "NOT_A_SUBSTITUTE", message: "Wybrany materiał nie jest odpowiednikiem pozycji zlecenia" },
 };
 
 const NOT_FOUND_MESSAGES: Record<string, string> = {
@@ -160,6 +161,13 @@ export function mapStockError(error: DbError, context: string): StockError {
         details: { current },
       };
     }
+    if (error.hint === "NOT_IN_REQUIREMENTS") {
+      return {
+        status: 400,
+        code: "NOT_IN_REQUIREMENTS",
+        message: `Materiał${error.details ? ` ${error.details}` : ""} nie występuje w zapotrzebowaniu zlecenia — nie można wydać zamiennika za niego`,
+      };
+    }
     if (error.hint === "LOCATION_INACTIVE" && error.details) {
       // Storno: detail = kod lokalizacji, której stan by wzrósł.
       return { status: 400, code: "LOCATION_INACTIVE", message: `Lokalizacja ${error.details} jest nieaktywna — cofnięcie zwiększyłoby jej stan` };
@@ -248,6 +256,10 @@ export type IssueResultDto = {
   reservationConsumed: number;
   /** Wydanie ADMIN-a mimo rezerwacji: zmniejszone rezerwacje innych zleceń. */
   reservationsOverridden: { orderId: string; quantity: number }[];
+  /** Etap 12b: wydanie zamiennika — materiał z zapotrzebowania, za który wydano (null — zwykłe wydanie). */
+  substituteFor: { materialId: string; code: string; name: string } | null;
+  /** Ile zdjęto z rezerwacji oryginału na tym zleceniu (SUBSTITUTE_RELEASE). */
+  substituteReservationReleased: number;
   idempotentReplay: boolean;
 };
 
@@ -262,6 +274,8 @@ type IssueRpcResult = {
   remaining_location_quantity: number | string;
   reservation_consumed?: number | string;
   reservations_overridden?: { order_id: string; quantity: number | string }[];
+  substitute_for?: { material_id: string; code: string; name: string } | null;
+  substitute_reservation_released?: number | string;
   idempotent_replay: boolean;
 };
 
@@ -277,6 +291,7 @@ export async function createIssue(db: Db, input: IssueInput): Promise<StockResul
     p_note: input.note ?? null,
     p_override_reservations: input.override_reservations ?? false,
     p_override_reason: input.override_reason ?? null,
+    p_substitute_for: input.substitute_for ?? null,
   });
   if (error || !data) return { ok: false, error: mapStockError(error ?? {}, "createIssue") };
   const r = data as IssueRpcResult;
@@ -293,6 +308,8 @@ export async function createIssue(db: Db, input: IssueInput): Promise<StockResul
       remainingLocationQuantity: Number(r.remaining_location_quantity),
       reservationConsumed: Number(r.reservation_consumed ?? 0),
       reservationsOverridden: (r.reservations_overridden ?? []).map((o) => ({ orderId: o.order_id, quantity: Number(o.quantity) })),
+      substituteFor: r.substitute_for ? { materialId: r.substitute_for.material_id, code: r.substitute_for.code, name: r.substitute_for.name } : null,
+      substituteReservationReleased: Number(r.substitute_reservation_released ?? 0),
       idempotentReplay: r.idempotent_replay === true,
     },
   };
@@ -631,6 +648,9 @@ export type MovementDto = {
   /** Tylko INVENTORY (Etap 13): sesja inwentaryzacji. */
   inventorySessionId: string | null;
   inventorySessionName: string | null;
+  /** Etap 12b: wydanie zamiennika (i jego storno) — materiał z zapotrzebowania, za który wydano. */
+  substituteForCode: string | null;
+  substituteForName: string | null;
 };
 type MovementRow = {
   movement_id: string;
@@ -664,6 +684,8 @@ type MovementRow = {
   reversible?: boolean;
   inventory_session_id?: string | null;
   inventory_session_name?: string | null;
+  substitute_for_code?: string | null;
+  substitute_for_name?: string | null;
 };
 
 export type MovementPage = { items: MovementDto[]; total: number; page: number; pageSize: number };
@@ -732,6 +754,8 @@ export async function listMovements(
         reversible: r.reversible === true,
         inventorySessionId: r.inventory_session_id ?? null,
         inventorySessionName: r.inventory_session_name ?? null,
+        substituteForCode: r.substitute_for_code ?? null,
+        substituteForName: r.substitute_for_name ?? null,
       })),
     },
   };

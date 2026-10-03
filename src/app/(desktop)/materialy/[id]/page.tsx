@@ -13,6 +13,8 @@ import { getMaterial } from "@/server/catalog";
 import { getMaterialTotal } from "@/server/overview";
 import { getMaterialAvailability } from "@/server/reservations";
 import { listMovements, listStock, type MovementDto } from "@/server/stock";
+import { listMaterialSubstitutes } from "@/server/substitutes";
+import { SubstitutesSection } from "./substitutes-section";
 
 export const metadata: Metadata = { title: "Materiał — FOR-BUD Magazyn" };
 
@@ -23,7 +25,7 @@ function movementLine(m: MovementDto): string {
   if (m.fromLocationCode !== null && m.toLocationCode !== null) {
     return `${m.fromLocationCode} → ${m.toLocationCode} · ${formatQuantityUnit(Math.abs(m.quantityDelta), m.unit)}`;
   }
-  return `${m.locationCode} · ${formatDelta(m.quantityDelta, m.unit)}`;
+  return `${m.locationCode} · ${formatDelta(m.quantityDelta, m.unit)}${m.substituteForCode ? ` · zamiennik za ${m.substituteForCode}` : ""}`;
 }
 
 // Szczegóły materiału (ADMIN, BIURO): kartoteka, stan łączny, rozbicie po lokalizacjach, ostatnie ruchy.
@@ -33,12 +35,13 @@ export default async function MaterialDetailsPage({ params }: PageProps<"/materi
   if (!id.success) notFound();
 
   const db = await createSupabaseServerClient();
-  const [material, total, stock, moves, availability] = await Promise.all([
+  const [material, total, stock, moves, availability, substitutes] = await Promise.all([
     getMaterial(db, id.data),
     getMaterialTotal(db, id.data),
     listStock(db, { materialId: id.data, page: 1, pageSize: 200 }),
     listMovements(db, { materialId: id.data, page: 1, pageSize: 10 }, { collapseTransfers: true }),
     getMaterialAvailability(db, id.data),
+    listMaterialSubstitutes(db, id.data),
   ]);
   const av = availability.ok ? availability.data : null;
   if (!material.ok) {
@@ -150,6 +153,18 @@ export default async function MaterialDetailsPage({ params }: PageProps<"/materi
             </Table>
           </div>
         </section>
+      )}
+
+      {substitutes.ok ? (
+        <SubstitutesSection
+          material={{ id: m.id, code: m.code, unit: m.unit, active: m.active }}
+          items={substitutes.data}
+          canEdit={user.role === "ADMIN"}
+        />
+      ) : (
+        <p role="alert" className="text-destructive">
+          Nie udało się wczytać odpowiedników.
+        </p>
       )}
 
       <section aria-labelledby="by-location" className="space-y-3">

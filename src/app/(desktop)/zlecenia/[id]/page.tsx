@@ -13,6 +13,7 @@ import { listMovements } from "@/server/stock";
 import { OrderHeader } from "./order-header";
 import { RequirementsSection } from "./requirements-section";
 import { ReservationsSection } from "./reservations-section";
+import { ShortagesSection } from "./shortages-section";
 
 export const metadata: Metadata = { title: "Zlecenie — FOR-BUD Magazyn" };
 
@@ -75,68 +76,13 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
         </p>
       )}
 
-      <section id="braki" className="space-y-3" aria-labelledby="shortages-title">
-        <h2 id="shortages-title" className="text-lg font-semibold">
-          Braki zlecenia
-        </h2>
-        <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">
-          „Dostępne” = wolne w magazynie (wspólne dla wszystkich zleceń, po odjęciu rezerwacji) + rezerwacja tego zlecenia.
-          Wolny stan może pokrywać kilka zleceń naraz — zarezerwuj, aby go zabezpieczyć. Łączne braki do zamówienia pokazuje
-          strona{" "}
-          <Link href="/braki" className="font-medium underline underline-offset-4">
-            Braki
-          </Link>
-          .
+      {!shortages.ok ? (
+        <p role="alert" className="text-destructive">
+          Nie udało się wczytać braków.
         </p>
-        {!shortages.ok ? (
-          <p role="alert" className="text-destructive">
-            Nie udało się wczytać braków.
-          </p>
-        ) : shortages.data.length === 0 ? (
-          <p className="rounded-xl border p-6 text-center text-muted-foreground">Brak aktywnych list zapotrzebowania.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Kod</TableHead>
-                  <TableHead>Nazwa</TableHead>
-                  <TableHead>Jedn.</TableHead>
-                  <TableHead className="text-right">Potrzebne</TableHead>
-                  <TableHead className="text-right">Wydano</TableHead>
-                  <TableHead className="text-right">Pozostało</TableHead>
-                  <TableHead className="text-right">Zarezerwowane</TableHead>
-                  <TableHead className="text-right">Wolne</TableHead>
-                  <TableHead className="text-right">Dostępne</TableHead>
-                  <TableHead className="text-right">Brakuje</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shortages.data.map((r) => (
-                  <TableRow key={r.materialId} className={r.shortage > 0 ? "bg-destructive/10" : undefined}>
-                    <TableCell className="font-mono">
-                      <Link href={`/materialy/${r.materialId}`} className="underline underline-offset-4">
-                        {r.materialCode}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{r.materialName}</TableCell>
-                    <TableCell>{r.unit}</TableCell>
-                    <TableCell className="text-right">{formatQuantity(r.needed)}</TableCell>
-                    <TableCell className="text-right">{formatQuantity(r.issued)}</TableCell>
-                    <TableCell className="text-right">{formatQuantity(r.remaining)}</TableCell>
-                    <TableCell className="text-right">{r.reserved > 0 ? formatQuantity(r.reserved) : "—"}</TableCell>
-                    <TableCell className="text-right">{formatQuantity(r.free)}</TableCell>
-                    <TableCell className="text-right">{formatQuantity(r.available)}</TableCell>
-                    <TableCell className={`text-right font-semibold ${r.shortage > 0 ? "text-destructive" : ""}`}>
-                      {r.shortage > 0 ? formatQuantity(r.shortage) : "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </section>
+      ) : (
+        <ShortagesSection orderStatus={o.status} rows={shortages.data} requirements={requirements.ok ? requirements.data : []} />
+      )}
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Wydane materiały (suma)</h2>
@@ -158,10 +104,15 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
               </TableHeader>
               <TableBody>
                 {summary.data.map((s) => (
-                  <TableRow key={s.materialId}>
+                  <TableRow key={`${s.materialId}:${s.substituteFor?.materialId ?? ""}`}>
                     <TableCell>
                       <span className="font-mono">{s.materialCode}</span>
                       <div className="text-xs text-muted-foreground">{s.materialName}</div>
+                      {s.substituteFor && (
+                        <div className="text-xs font-medium text-amber-800">
+                          użyto zamiennika {s.materialCode} za {s.substituteFor.code} ({s.substituteFor.name})
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       <span className="font-semibold">{formatQuantity(s.quantity)}</span> {s.unit}
@@ -211,6 +162,11 @@ export default async function OrderDetailsPage({ params }: PageProps<"/zlecenia/
                     <TableCell>
                       <span className="font-mono">{m.materialCode}</span>
                       <div className="text-xs text-muted-foreground">{m.materialName}</div>
+                      {m.substituteForCode && (
+                        <div className="text-xs font-medium text-amber-800">
+                          zamiennik za {m.substituteForCode}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
                       <span className="font-semibold">{formatQuantity(-m.quantityDelta)}</span> {m.unit}

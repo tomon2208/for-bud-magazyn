@@ -20,6 +20,7 @@ import { formatLabel, parseImport } from "@/modules/liczokno-import/formats";
 import { aggregateLines, cut, normalizeUnit, numberText, type AggregatedItem } from "@/modules/liczokno-import/normalize";
 import { ACCEPTED_IMPORT_EXTENSIONS, MAX_IMPORT_FILE_BYTES, readWorkbookRows } from "@/modules/liczokno-import/read-workbook";
 import {
+  availabilityInfo,
   buildImportItems,
   buildPreview,
   sortRank,
@@ -654,6 +655,7 @@ function PreviewRow({
                 <div className="text-xs text-sky-800">{p.manual ? `proponowano: ${p.conversion}` : p.conversion}</div>
               )}
               {p.quantityError && <div className="text-xs text-destructive">{p.quantityError}</div>}
+              {availabilityInfo(p) && <div className="text-xs text-amber-800">{availabilityInfo(p)}</div>}
             </div>
           ) : (
             <span className="text-muted-foreground">—</span>

@@ -20,6 +20,7 @@ const EVENT_LABELS: Record<ReservationEventDto["type"], string> = {
   CONSUME: "Zużyto przy wydaniu",
   OVERRIDE: "Zabrano (wydanie mimo rezerwacji)",
   AUTO_RELEASE: "Zwolniono automatycznie",
+  SUBSTITUTE_RELEASE: "Zwolniono (wydano zamiennik)",
 };
 
 const NETWORK = "Brak połączenia z serwerem";

@@ -30,7 +30,9 @@ import {
   issueReasonLabel,
   type IssueReasonCode,
 } from "@/lib/validation/stock";
+import { substituteCandidates, substituteQuantityError } from "@/lib/substitutes";
 import type { OrderDto } from "@/server/orders";
+import type { ToIssueDto } from "@/server/requirements";
 import type { MovementPage } from "@/server/stock";
 
 type Tab = "ISSUE" | "TRANSFER";
@@ -202,6 +204,9 @@ export function IssuesView({
                             {m.reason && <span className="text-muted-foreground"> — {m.reason}</span>}
                           </span>
                         )}
+                        {m.substituteForCode && (
+                          <div className="text-xs font-medium text-amber-800">zamiennik za {m.substituteForCode}</div>
+                        )}
                         {m.note && <div className="text-xs text-muted-foreground">{m.note}</div>}
                       </TableCell>
                     </>
@@ -336,6 +341,32 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
   const guard = useConfirmGuard();
+  // Etap 12b (H1): gdy materiał nie ma „pozostało” na zleceniu, a jest odpowiednikiem pozycji z pozostało > 0 —
+  // widoczny wybór „Policz jako zamiennik za XXX” (domyślnie największe pozostało) albo zwykłe wydanie.
+  const [toIssue, setToIssue] = useState<{ orderId: string; items: ToIssueDto[] } | null>(null);
+  const [toIssueVersion, setToIssueVersion] = useState(0);
+  const [subPick, setSubPick] = useState<{ key: string; value: string } | null>(null);
+  const orderId = mode === "order" ? (order?.id ?? null) : null;
+  useEffect(() => {
+    if (!orderId) return;
+    const controller = new AbortController();
+    fetch(`/api/v1/orders/${orderId}/to-issue`, { signal: controller.signal })
+      .then(async (res) => {
+        const json = (await res.json().catch(() => null)) as { data?: ToIssueDto[] } | null;
+        setToIssue({ orderId, items: res.ok && json?.data ? json.data : [] });
+      })
+      .catch(() => {
+        // brak listy = brak podpowiedzi (zwykłe wydanie)
+      });
+    return () => controller.abort();
+  }, [orderId, toIssueVersion]);
+  const substituteOptions =
+    orderId && material && toIssue?.orderId === orderId ? substituteCandidates(toIssue.items, material.id) : [];
+  const pickKey = `${orderId ?? ""}|${material?.id ?? ""}`;
+  const substituteValue =
+    subPick && subPick.key === pickKey && (subPick.value === "" || substituteOptions.some((t) => t.materialId === subPick.value))
+      ? subPick.value
+      : (substituteOptions[0]?.materialId ?? "");
 
   const locked = att.locked || lookingUp || overrideOpen;
 
@@ -352,9 +383,12 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
     if (!res) return;
     if (res.kind === "ok") {
       const overridden = (res.data.reservationsOverridden ?? []).reduce((sum, o) => sum + o.quantity, 0);
+      const sub = res.data.substituteFor;
       setNotice(
         okNotice(
-          `Wydano ${formatQuantityUnit(res.data.quantity, label.unit)} ${label.code} z ${label.locationCode} na ${label.target}. ` +
+          `Wydano ${formatQuantityUnit(res.data.quantity, label.unit)} ${label.code}` +
+            (sub ? ` (zamiennik za ${sub.code})` : "") +
+            ` z ${label.locationCode} na ${label.target}. ` +
             `Zostało w lokalizacji: ${formatQuantityUnit(res.data.remainingLocationQuantity, label.unit)}` +
             (overridden > 0 ? `; zmniejszono rezerwacje innych zleceń o ${formatQuantityUnit(overridden, label.unit)}` : ""),
           res.data.idempotentReplay,
@@ -364,6 +398,8 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
       setMaterial(null);
       setQty("");
       setNote("");
+      setSubPick(null);
+      setToIssueVersion((v) => v + 1);
       resetOverride();
       onSaved();
     } else if (res.kind === "error") {
@@ -405,6 +441,12 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
       if (!material) errs.material = "Wybierz materiał";
       const q = checkQuantity(qty, material?.allowsFraction ?? true);
       if (!q.ok) errs.quantity = q.message;
+      // Zamiennik za materiał bez ułamków — tylko całości (baza: NOT_INTEGER z kodem oryginału).
+      const original = mode === "order" && substituteValue ? substituteOptions.find((t) => t.materialId === substituteValue) : undefined;
+      if (q.ok && original) {
+        const subErr = substituteQuantityError(q.value, { code: original.materialCode, allowsFraction: original.allowsFraction });
+        if (subErr) errs.quantity = subErr;
+      }
       setErrors(errs);
       if (Object.keys(errs).length > 0 || !code || !material || !q.ok) return;
       setLookingUp(true);
@@ -421,6 +463,7 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
         reason_code: mode === "reason" ? reasonCode || null : null,
         reason: mode === "reason" ? reasonText.trim() || null : null,
         note: note.trim() || null,
+        ...(mode === "order" && substituteValue ? { substitute_for: substituteValue } : {}),
       };
       label = {
         code: material.code,
@@ -554,6 +597,27 @@ function DesktopIssueForm({ onClose, onSaved }: { onClose: () => void; onSaved: 
                 inStock
                 onChange={(m) => (setNotice(null), setMaterial(m))}
               />
+              {substituteOptions.length > 0 && material && (
+                <Field id="iss-subst" label="Policz jako zamiennik za">
+                  <select
+                    id="iss-subst"
+                    value={substituteValue}
+                    onChange={(e) => (setNotice(null), setSubPick({ key: pickKey, value: e.target.value }))}
+                    className={`${SELECT_CLASS} w-full`}
+                  >
+                    {substituteOptions.map((t) => (
+                      <option key={t.materialId} value={t.materialId}>
+                        {t.materialCode} — {t.materialName} (pozostało {formatQuantityUnit(t.remaining, t.unit)})
+                      </option>
+                    ))}
+                    <option value="">Zwykłe wydanie (nadwydanie — bez zamiennika)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {material.code} nie ma „pozostało” na tym zleceniu, a jest odpowiednikiem jego pozycji — jako zamiennik wydanie
+                    zmniejszy „pozostało” wybranego materiału (1:1).
+                  </p>
+                </Field>
+              )}
               <Field id="iss-qty" label={`Ilość *${material ? ` (${material.unit})` : ""}`} error={errors.quantity}>
                 <Input
                   id="iss-qty"

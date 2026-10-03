@@ -7,6 +7,7 @@ import { CsvButton } from "@/components/csv-button";
 import { SELECT_CLASS } from "@/components/form-parts";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { pluralPl } from "@/lib/format";
+import { formatSubstitutesInStock } from "@/lib/substitutes";
 import { formatQuantity } from "@/lib/validation/stock";
 import type { ShortageDto } from "@/server/requirements";
 
@@ -148,7 +149,12 @@ export function ShortagesView({
                           {r.materialCode}
                         </Link>
                       </TableCell>
-                      <TableCell>{r.materialName}</TableCell>
+                      <TableCell>
+                        {r.materialName}
+                        {r.shortage > 0 && formatSubstitutesInStock(r.substitutes) && (
+                          <div className="text-xs font-medium text-amber-800">odpowiedniki: {formatSubstitutesInStock(r.substitutes)}</div>
+                        )}
+                      </TableCell>
                       <TableCell>{r.categoryName}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         {formatQuantity(r.remaining)} {r.unit}

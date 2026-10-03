@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseSubstitutes, type SubstituteOption } from "@/lib/substitutes";
 import type { ImportRequirementInput, ResolveCodesInput, UpsertAliasInput } from "@/lib/validation/import";
 import { mapRequirementError } from "./requirements";
 import type { ServiceResult } from "./users";
@@ -19,6 +20,10 @@ export type ResolvedCodeMaterialDto = {
   allowsFraction: boolean;
   barLengthM: number | null;
   active: boolean;
+  /** Etap 12b: wolne w magazynie (stan aktywnych lokalizacji − rezerwacje). */
+  free: number;
+  /** Etap 12b: aktywne odpowiedniki z wolnym stanem. */
+  substitutes: SubstituteOption[];
 };
 export type ResolvedCodeDto = {
   code: string;
@@ -38,6 +43,8 @@ type ResolvedCodeRow = {
   allows_fraction: boolean | null;
   bar_length_m: number | string | null;
   active: boolean | null;
+  free?: number | string | null;
+  substitutes?: unknown;
 };
 
 /** Dopasowanie kodów z pliku do kartoteki (powiązanie → kod materiału → nieznany) — jeden round-trip. */
@@ -61,6 +68,8 @@ export async function resolveImportCodes(db: Db, input: ResolveCodesInput): Prom
               allowsFraction: r.allows_fraction ?? true,
               barLengthM: r.bar_length_m === null ? null : Number(r.bar_length_m),
               active: r.active ?? false,
+              free: Number(r.free ?? 0),
+              substitutes: parseSubstitutes(r.substitutes),
             },
     })),
   };

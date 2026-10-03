@@ -19,7 +19,13 @@ import {
 } from "@/lib/validation/stock";
 import { ORDER_STATUS_LABELS, orderSubLabel } from "@/lib/validation/orders";
 import type { OrderDto } from "@/server/orders";
-import { issueLimit, suggestIssueQuantity } from "@/lib/to-issue";
+import { issueLimit, suggestQuantityForRow } from "@/lib/to-issue";
+import {
+  defaultSubstituteChoice,
+  substituteCandidates,
+  substituteQuantityError,
+  type SubstituteOption,
+} from "@/lib/substitutes";
 import { MIN_OVERRIDE_REASON_LENGTH } from "@/lib/validation/stock";
 import type { MaterialAvailabilityDto } from "@/server/reservations";
 import type { ToIssueDto } from "@/server/requirements";
@@ -39,6 +45,27 @@ import {
 } from "../wizard-parts";
 
 type Step = "target" | "reason" | "material" | "location" | "quantity" | "summary" | "done";
+/** Etap 12b: wydanie zamiennika — oryginał z zapotrzebowania + dane do podpowiedzi ilości (z chwili tapnięcia). */
+type SubstituteFor = { id: string; code: string; name: string; remaining: number; subAvailable: number; allowsFraction: boolean };
+/** Etap 12b (H1): podpowiedź w podsumowaniu — kandydaci „Policz jako zamiennik za XXX”; selected "" = zwykłe wydanie. */
+type Candidate = { id: string; code: string; name: string; remaining: number; unit: string; allowsFraction: boolean };
+/** loading / error — lista „do wydania” jeszcze nieznana; nie przechodzimy po cichu jako zwykłe wydanie. */
+type SubChoice =
+  | { status: "ok"; candidates: Candidate[]; selected: string }
+  | { status: "loading" }
+  | { status: "error"; message: string };
+
+function buildSubChoice(items: ToIssueDto[], materialId: string, qty: number): SubChoice | null {
+  const cands: Candidate[] = substituteCandidates(items, materialId).map((c) => ({
+    id: c.materialId,
+    code: c.materialCode,
+    name: c.materialName,
+    remaining: c.remaining,
+    unit: c.unit,
+    allowsFraction: c.allowsFraction,
+  }));
+  return cands.length > 0 ? { status: "ok", candidates: cands, selected: defaultSubstituteChoice(cands, qty) } : null;
+}
 type PendingIssue = PendingOperation<"ISSUE">;
 
 function targetLabel(t: IssueTarget): string {
@@ -94,6 +121,8 @@ export function IssueWizard({
   const [avail, setAvail] = useState<Availability>(null);
   const [overrideMode, setOverrideMode] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
+  const [substituteFor, setSubstituteFor] = useState<SubstituteFor | null>(null);
+  const [subChoice, setSubChoice] = useState<SubChoice | null>(null);
 
   // „Do wydania na to zlecenie” (zapotrzebowanie: pozostało > 0) — ładowane przy kroku wyboru materiału.
   const toIssue = useToIssue(target?.kind === "order" ? target.id : null, step === "material");
@@ -158,7 +187,7 @@ export function IssueWizard({
   }
 
   /** Wiersz stanu (materiał w lokalizacji) → krok ilości z dostępną ilością. */
-  function pickStockRow(row: StockRow) {
+  function pickStockRow(row: StockRow, sub: SubstituteFor | null) {
     setMaterial({
       id: row.materialId,
       code: row.materialCode,
@@ -173,7 +202,9 @@ export function IssueWizard({
     loadAvailability(row.materialId, target);
     // Materiał z zapotrzebowania zlecenia: podpowiedź ilości = min(pozostało, dostępne w tej lokalizacji).
     // Tylko ze świeżych danych (po wydaniu stary wynik jest unieważniany do czasu nowej odpowiedzi).
-    const suggested = suggestIssueQuantity(toIssue, row.materialId, row.quantity);
+    // Zamiennik (Etap 12b): min(pozostało oryginału, dostępne zamiennika dla zlecenia, w lokalizacji).
+    // Dane zamiennika przekazane parametrem (L3) — nie z domknięcia sprzed setState.
+    const suggested = suggestQuantityForRow(toIssue, row, sub);
     setQtyText(suggested === null ? "" : formatQuantity(suggested));
     setQtyError(null);
     setStep("quantity");
@@ -181,15 +212,8 @@ export function IssueWizard({
 
   /** Tapnięcie pozycji z „Do wydania na to zlecenie”: materiał wybrany, dalej lokalizacja (albo ilość przy ustalonej lokalizacji). */
   async function pickPlanned(item: ToIssueDto) {
-    setToIssueMessage(null);
-    if (presetLocation) {
-      const r = await fetchStock({ materialId: item.materialId, locationId: presetLocation.id });
-      if (r.kind === "error") return setToIssueMessage(r.message);
-      const row = r.items.find((i) => i.locationId === presetLocation.id && i.quantity > 0);
-      if (!row) return setToIssueMessage(`W lokalizacji ${presetLocation.code} nie ma materiału ${item.materialCode}.`);
-      return pickStockRow(row);
-    }
-    pickMaterial({
+    setSubstituteFor(null);
+    await pickKnown(null, {
       id: item.materialId,
       code: item.materialCode,
       name: item.materialName,
@@ -197,6 +221,33 @@ export function IssueWizard({
       allowsFraction: item.allowsFraction,
       defaultSupplierId: null,
     });
+  }
+
+  /** Etap 12b: tapnięcie „Odpowiednik YYY” przy pozycji XXX — wydanie YYY jako zamiennika za XXX. */
+  async function pickSubstitute(item: ToIssueDto, sub: SubstituteOption) {
+    const chosen: SubstituteFor = {
+      id: item.materialId,
+      code: item.materialCode,
+      name: item.materialName,
+      remaining: item.remaining,
+      subAvailable: sub.available,
+      allowsFraction: item.allowsFraction,
+    };
+    setSubstituteFor(chosen);
+    await pickKnown(chosen, { id: sub.materialId, code: sub.code, name: sub.name, unit: sub.unit, allowsFraction: sub.allowsFraction, defaultSupplierId: null });
+  }
+
+  /** Materiał znany z listy „Do wydania”: dalej lokalizacja (albo ilość przy ustalonej lokalizacji). */
+  async function pickKnown(sub: SubstituteFor | null, m: PickedMaterial) {
+    setToIssueMessage(null);
+    if (presetLocation) {
+      const r = await fetchStock({ materialId: m.id, locationId: presetLocation.id });
+      if (r.kind === "error") return setToIssueMessage(r.message);
+      const row = r.items.find((i) => i.locationId === presetLocation.id && i.quantity > 0);
+      if (!row) return setToIssueMessage(`W lokalizacji ${presetLocation.code} nie ma materiału ${m.code}.`);
+      return pickStockRow(row, sub);
+    }
+    pickMaterial(m);
   }
 
   function goSummary(event: FormEvent<HTMLFormElement>) {
@@ -215,14 +266,41 @@ export function IssueWizard({
         `Za dużo — można wydać ${formatQuantityUnit(limit, material.unit)} (reszta jest zarezerwowana dla innych zleceń)`,
       );
     }
+    // Zamiennik wskazany w „Do wydania”: ilość dopuszczalna także dla oryginału (baza: NOT_INTEGER z kodem XXX).
+    if (substituteFor && substituteFor.id !== material.id) {
+      const subErr = substituteQuantityError(check.value, substituteFor);
+      if (subErr) return setQtyError(subErr);
+    }
     // ADMIN: świadome wydanie mimo rezerwacji — podsumowanie wymaga powodu.
     setOverrideMode(reservedBlock);
     setOverrideReason("");
+    // H1: materiał bez „pozostało” na zleceniu, a odpowiednik ma — widoczny wybór (domyślnie największe pozostało).
+    if (target?.kind === "order" && !substituteFor) {
+      if (toIssue.kind === "ok") setSubChoice(buildSubChoice(toIssue.items, material.id, check.value));
+      else void loadSubChoice(target.id, material.id, check.value);
+    } else {
+      setSubChoice(null);
+    }
     setQuantity(check.value);
     setRequestId(crypto.randomUUID());
     op.clearError();
     guard.arm();
     setStep("summary");
+  }
+
+  /** Lista „do wydania” nieznana (wczytywanie / błąd) — dociągamy ją przed podsumowaniem (bez cichego zwykłego wydania). */
+  async function loadSubChoice(orderId: string, materialId: string, qty: number) {
+    setSubChoice({ status: "loading" });
+    try {
+      const res = await fetch(`/api/v1/orders/${orderId}/to-issue`);
+      const json = (await res.json().catch(() => null)) as { data?: ToIssueDto[]; error?: { message?: string } } | null;
+      if (!res.ok || !json?.data) {
+        return setSubChoice({ status: "error", message: json?.error?.message ?? `Błąd (${res.status})` });
+      }
+      setSubChoice(buildSubChoice(json.data, materialId, qty));
+    } catch {
+      setSubChoice({ status: "error", message: "Brak połączenia z serwerem" });
+    }
   }
 
   /** RESERVED_STOCK (ADMIN): przejście w tryb „wydaj mimo rezerwacji” — nowy identyfikator, wymagany powód. */
@@ -258,6 +336,15 @@ export function IssueWizard({
     setStep("done");
   }
 
+  // Zamiennik wysyłany do bazy: wskazany w „Do wydania” albo wybrany w podsumowaniu (H1 — zawsze jawnie).
+  const chosenCandidate = subChoice?.status === "ok" ? (subChoice.candidates.find((c) => c.id === subChoice.selected) ?? null) : null;
+  const subPending = !substituteFor && (subChoice?.status === "loading" || subChoice?.status === "error");
+  const effectiveSub = substituteFor
+    ? { id: substituteFor.id, code: substituteFor.code, name: substituteFor.name }
+    : chosenCandidate
+      ? { id: chosenCandidate.id, code: chosenCandidate.code, name: chosenCandidate.name }
+      : null;
+
   function confirm() {
     if (!target || !material || !location || !requestId || quantity === null) return;
     void send({
@@ -275,8 +362,14 @@ export function IssueWizard({
         reason: target.kind === "reason" ? target.text : null,
         note: null,
         ...(overrideMode ? { override_reservations: true, override_reason: overrideReason.trim() } : {}),
+        ...(effectiveSub && target.kind === "order" ? { substitute_for: effectiveSub.id } : {}),
       },
-      ctx: { location, material, target },
+      ctx: {
+        location,
+        material,
+        target,
+        ...(effectiveSub && target.kind === "order" ? { substituteFor: effectiveSub } : {}),
+      },
       savedAt: Date.now(),
     });
   }
@@ -291,6 +384,8 @@ export function IssueWizard({
     setResult(null);
     setOverrideMode(p.payload.override_reservations === true);
     setOverrideReason(p.payload.override_reason ?? "");
+    setSubstituteFor(p.ctx.substituteFor ? { ...p.ctx.substituteFor, remaining: 0, subAvailable: 0, allowsFraction: true } : null);
+    setSubChoice(null);
     loadAvailability(p.ctx.material.id, p.ctx.target);
     guard.arm();
     setStep("summary");
@@ -324,7 +419,13 @@ export function IssueWizard({
       setStep("target");
       return;
     }
-    if (err?.code === "NOT_FOUND" || err?.code === "IDEMPOTENCY_CONFLICT") {
+    if (
+      err?.code === "NOT_FOUND" ||
+      err?.code === "IDEMPOTENCY_CONFLICT" ||
+      err?.code === "NOT_A_SUBSTITUTE" ||
+      err?.code === "NOT_IN_REQUIREMENTS"
+    ) {
+      setSubstituteFor(null);
       setMaterial(null);
       setLocation(presetLocation);
       setStep("material");
@@ -339,12 +440,17 @@ export function IssueWizard({
   const fixLabel =
     op.error?.code === "ORDER_NOT_OPEN" || (op.error?.code === "NOT_FOUND" && target?.kind === "order")
       ? "Wybierz inne zlecenie"
-      : op.error?.code === "NOT_FOUND" || op.error?.code === "IDEMPOTENCY_CONFLICT"
+      : op.error?.code === "NOT_FOUND" ||
+          op.error?.code === "IDEMPOTENCY_CONFLICT" ||
+          op.error?.code === "NOT_A_SUBSTITUTE" ||
+          op.error?.code === "NOT_IN_REQUIREMENTS"
         ? "Wybierz ponownie materiał"
         : "Popraw ilość";
 
   function nextMaterial() {
     setOverrideMode(false);
+    setSubstituteFor(null);
+    setSubChoice(null);
     setMaterial(null);
     setLocation(presetLocation);
     setResult(null);
@@ -355,6 +461,8 @@ export function IssueWizard({
 
   function changeTarget() {
     setOverrideMode(false);
+    setSubstituteFor(null);
+    setSubChoice(null);
     setTarget(null);
     setReasonCode(null);
     setStep("target");
@@ -371,6 +479,9 @@ export function IssueWizard({
           z <span className="font-mono text-2xl font-bold">{p.ctx.location.code}</span>
         </p>
         <p className="mt-2 text-lg break-words">na: {targetLabel(p.ctx.target)}</p>
+        {p.ctx.substituteFor && (
+          <p className="mt-2 text-base font-semibold text-amber-900">Zamiennik za {p.ctx.substituteFor.code}</p>
+        )}
         {p.payload.override_reservations && (
           <p className="mt-2 text-base font-semibold text-amber-900">Mimo rezerwacji — powód: {p.payload.override_reason}</p>
         )}
@@ -407,10 +518,10 @@ export function IssueWizard({
       )}
       {material && (step === "location" || step === "quantity" || step === "summary") && (
         <ContextRow
-          label="Materiał"
+          label={substituteFor && substituteFor.id !== material.id ? `Materiał — zamiennik za ${substituteFor.code}` : "Materiał"}
           value={material.code}
           sub={`${material.name} · ${material.unit}`}
-          onChange={frozen ? undefined : () => (setLocation(presetLocation), setStep("material"))}
+          onChange={frozen ? undefined : () => (setSubstituteFor(null), setLocation(presetLocation), setStep("material"))}
         />
       )}
       {location && material && (step === "quantity" || step === "summary") && (
@@ -483,7 +594,12 @@ export function IssueWizard({
         <>
           <h2 className="text-2xl font-bold">Wybierz materiał</h2>
           {target?.kind === "order" && (
-            <ToIssueList state={toIssue} message={toIssueMessage} onSelect={(i) => void pickPlanned(i)} />
+            <ToIssueList
+              state={toIssue}
+              message={toIssueMessage}
+              onSelect={(i) => void pickPlanned(i)}
+              onSubstitute={(i, sub) => void pickSubstitute(i, sub)}
+            />
           )}
           {presetLocation ? (
             <StockRows
@@ -491,16 +607,21 @@ export function IssueWizard({
               filter={{ locationId: presetLocation.id }}
               emptyText="Lokalizacja jest pusta — nie ma czego wydać."
               show="material"
-              onSelect={pickStockRow}
+              onSelect={(row) => (setSubstituteFor(null), pickStockRow(row, null))}
             />
           ) : (
-            <MaterialPicker onSelect={pickMaterial} recent={recentMaterials} recentLabel="Ostatnio wydawane" inStock />
+            <MaterialPicker
+              onSelect={(m) => (setSubstituteFor(null), pickMaterial(m))}
+              recent={recentMaterials}
+              recentLabel="Ostatnio wydawane"
+              inStock
+            />
           )}
         </>
       )}
 
       {step === "location" && material && (
-        <LocationStep material={material} onSelect={pickStockRow} />
+        <LocationStep material={material} onSelect={(row) => pickStockRow(row, substituteFor)} />
       )}
 
       {step === "quantity" && material && location && (
@@ -538,6 +659,12 @@ export function IssueWizard({
             </p>
             <p className="text-xl font-semibold break-all">{material.code}</p>
             <p className="text-base text-muted-foreground">{material.name}</p>
+            {effectiveSub && effectiveSub.id !== material.id && (
+              <p className="mt-2 rounded-xl bg-amber-100 px-3 py-2 text-lg font-bold text-amber-950">
+                Zamiennik za {effectiveSub.code}
+                <span className="block text-sm font-normal">{effectiveSub.name}</span>
+              </p>
+            )}
             <p className="mt-3 text-lg">
               z <span className="font-mono text-2xl font-bold">{location.code}</span>
             </p>
@@ -548,6 +675,62 @@ export function IssueWizard({
               <p className="text-sm break-words text-muted-foreground">{target.sub}</p>
             )}
           </section>
+
+          {subChoice?.status === "loading" && !substituteFor && (
+            <p className="rounded-xl bg-muted p-3 text-base">Sprawdzanie, czy materiał jest odpowiednikiem pozycji zlecenia…</p>
+          )}
+          {subChoice?.status === "error" && !substituteFor && material && target?.kind === "order" && quantity !== null && (
+            <div role="alert" className="flex flex-col gap-2 rounded-xl bg-amber-100 p-3 text-base text-amber-950">
+              <span>Nie udało się sprawdzić odpowiedników ({subChoice.message}).</span>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => void loadSubChoice(target.id, material.id, quantity)}>
+                  Ponów
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setSubChoice(null)}>
+                  Wydaj jako zwykłe wydanie
+                </Button>
+              </div>
+            </div>
+          )}
+          {subChoice?.status === "ok" && !substituteFor && (
+            <fieldset className="flex flex-col gap-2 rounded-2xl border-2 border-amber-400 p-4" disabled={frozen || op.submitting}>
+              <legend className="px-1 text-lg font-bold">
+                {material.code} nie ma „pozostało” na tym zleceniu — jest odpowiednikiem pozycji zlecenia
+              </legend>
+              {subChoice.candidates.map((c) => {
+                const qtyErr = quantity === null ? null : substituteQuantityError(quantity, c);
+                return (
+                  <label key={c.id} className="flex min-h-14 items-center gap-3 rounded-xl border bg-background px-4 py-2 text-lg">
+                    <input
+                      type="radio"
+                      name="sub-choice"
+                      className="size-6"
+                      checked={subChoice.selected === c.id}
+                      disabled={qtyErr !== null}
+                      onChange={() => setSubChoice({ ...subChoice, selected: c.id })}
+                    />
+                    <span>
+                      Policz jako zamiennik za <span className="font-mono font-bold">{c.code}</span>
+                      <span className="block text-sm text-muted-foreground">
+                        {c.name} · pozostało {formatQuantityUnit(c.remaining, c.unit)}
+                      </span>
+                      {qtyErr && <span className="block text-sm font-semibold text-destructive">{qtyErr}</span>}
+                    </span>
+                  </label>
+                );
+              })}
+              <label className="flex min-h-14 items-center gap-3 rounded-xl border bg-background px-4 py-2 text-lg">
+                <input
+                  type="radio"
+                  name="sub-choice"
+                  className="size-6"
+                  checked={subChoice.selected === ""}
+                  onChange={() => setSubChoice({ ...subChoice, selected: "" })}
+                />
+                <span>Zwykłe wydanie (nadwydanie — nie zmniejszy „pozostało” innej pozycji)</span>
+              </label>
+            </fieldset>
+          )}
 
           {overrideMode && (
             <section className="flex flex-col gap-2 rounded-2xl bg-amber-100 p-4 text-amber-950">
@@ -584,6 +767,7 @@ export function IssueWizard({
             disabled={
               op.submitting ||
               op.error?.kind === "domain" ||
+              (subPending && !op.unresolved) ||
               (overrideMode && !op.unresolved && overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH)
             }
             onClick={(e) => guard.allow(e) && (op.unresolved && op.pending ? void send(op.pending) : confirm())}
@@ -617,6 +801,16 @@ export function IssueWizard({
               Zostało w lokalizacji:{" "}
               <span className="font-bold">{formatQuantityUnit(result.remainingLocationQuantity, material.unit)}</span>
             </p>
+            {result.substituteFor && (
+              <p className="mt-2 text-lg font-bold">
+                Zamiennik za {result.substituteFor.code}
+              </p>
+            )}
+            {(result.substituteReservationReleased ?? 0) > 0 && result.substituteFor && (
+              <p className="mt-1 text-base">
+                Rezerwacja {result.substituteFor.code} na tym zleceniu zmniejszona o {formatQuantity(result.substituteReservationReleased ?? 0)}
+              </p>
+            )}
             {(result.reservationConsumed ?? 0) > 0 && (
               <p className="mt-2 text-base">
                 Z rezerwacji zlecenia: {formatQuantityUnit(result.reservationConsumed ?? 0, material.unit)}
@@ -852,7 +1046,17 @@ function useToIssue(orderId: string | null, active: boolean) {
 type ToIssueState = ReturnType<typeof useToIssue>;
 
 /** „Do wydania na to zlecenie”: pozycje zapotrzebowania z pozostało > 0; tapnięcie wybiera materiał. */
-function ToIssueList({ state, message, onSelect }: { state: ToIssueState; message: string | null; onSelect: (i: ToIssueDto) => void }) {
+function ToIssueList({
+  state,
+  message,
+  onSelect,
+  onSubstitute,
+}: {
+  state: ToIssueState;
+  message: string | null;
+  onSelect: (i: ToIssueDto) => void;
+  onSubstitute: (i: ToIssueDto, sub: SubstituteOption) => void;
+}) {
   if (state.kind === "loading") {
     return <p className="text-muted-foreground">Wczytywanie zapotrzebowania…</p>;
   }
@@ -881,6 +1085,25 @@ function ToIssueList({ state, message, onSelect }: { state: ToIssueState; messag
               )}
               {i.available <= 0 && <span className="text-sm font-semibold text-destructive">brak wolnego towaru</span>}
             </button>
+            {/* Etap 12b: za mało oryginału — odpowiedniki z dostępnym towarem (tapnięcie = wydanie zamiennika). */}
+            {i.available < i.remaining &&
+              (i.substitutes ?? [])
+                .filter((sub) => sub.available > 0)
+                .map((sub) => (
+                  <button
+                    key={sub.materialId}
+                    type="button"
+                    className="mt-1 ml-4 flex min-h-14 w-[calc(100%-1rem)] flex-col items-start rounded-xl border border-amber-400 bg-amber-50 px-4 py-2 text-left text-amber-950 active:bg-amber-100"
+                    onClick={() => onSubstitute(i, sub)}
+                  >
+                    <span className="text-base font-bold">
+                      Odpowiednik <span className="font-mono">{sub.code}</span>: dostępne {formatQuantityUnit(sub.available, sub.unit)}
+                    </span>
+                    <span className="text-sm">
+                      {sub.name} — wydaj jako zamiennik za {i.materialCode}
+                    </span>
+                  </button>
+                ))}
           </li>
         ))}
       </ul>

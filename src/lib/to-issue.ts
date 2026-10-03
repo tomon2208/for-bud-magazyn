@@ -1,4 +1,5 @@
 // „Do wydania na to zlecenie” (terminal): czysta logika podpowiedzi ilości.
+import { suggestSubstituteQuantity } from "./substitutes";
 
 export type ToIssueView = {
   /** ok — świeże dane z serwera; loading/error/none — brak podstaw do podpowiedzi. */
@@ -25,4 +26,26 @@ export function suggestIssueQuantity(view: ToIssueView, materialId: string, avai
 /** Etap 11: ile można wydać z tej lokalizacji z uwzględnieniem rezerwacji (null — dostępność nieznana). */
 export function issueLimit(availableAtLocation: number, availableForIssue: number | null): number {
   return availableForIssue === null ? availableAtLocation : Math.max(0, Math.min(availableAtLocation, availableForIssue));
+}
+
+/**
+ * Etap 12b (L3): podpowiedź ilości po wyborze wiersza stanu — dla wydania zamiennika (dane zamiennika przekazane
+ * jawnie, nie z domknięcia) min(pozostało oryginału, dostępne zamiennika dla zlecenia, w lokalizacji); inaczej jak
+ * `suggestIssueQuantity`.
+ */
+export function suggestQuantityForRow(
+  view: ToIssueView,
+  row: { materialId: string; quantity: number; allowsFraction: boolean },
+  substitute: { id: string; remaining: number; subAvailable: number; allowsFraction?: boolean } | null,
+): number | null {
+  if (substitute && substitute.id !== row.materialId) {
+    // Całości, gdy całkowity jest zamiennik ALBO oryginał (baza odrzuci ułamek za oryginał bez ułamków).
+    return suggestSubstituteQuantity(
+      substitute.remaining,
+      substitute.subAvailable,
+      row.quantity,
+      row.allowsFraction && substitute.allowsFraction !== false,
+    );
+  }
+  return suggestIssueQuantity(view, row.materialId, row.quantity);
 }

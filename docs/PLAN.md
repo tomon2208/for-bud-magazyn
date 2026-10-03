@@ -221,6 +221,12 @@ Każdy etap: Implementer → testy/lint/typecheck/build → Reviewer → poprawk
 **Etap 13 — inwentaryzacja**: sesja inwentaryzacyjna, różnice → ruchy `INVENTORY`.
 - Decyzje użytkownika (2026-10-03): sesja inwentaryzacyjna na wybrane lokalizacje (wszystkie lub część, np. regał A) — liczenie kawałkami bez zatrzymywania hali; ruchy NIE są blokowane — jeśli po policzeniu lokalizacji był na niej ruch danego materiału, pozycja oznaczona „do ponownego policzenia” zamiast wprowadzać różnicę; liczenie „na ślepo” (liczący nie widzi stanu systemowego); liczy PRODUKCJA (i ADMIN) na telefonie, różnice zatwierdza BIURO lub ADMIN — świadomy wyjątek od zasady „BIURO bez korekt” (ROLES.md), każda zatwierdzona różnica = ruch INVENTORY w historii z użytkownikiem zatwierdzającym.
 
+**Etap 14 — przegląd UI/UX przed startem** (decyzja użytkownika 2026-10-03; po Etapie 12b, przed „Start produkcyjny”):
+1. PWA: manifest, ikony FOR-BUD, tryb pełnoekranowy (bez paska przeglądarki), start terminala z dużym SKANUJ — instalacja na telefonie pracownika.
+2. Terminal na prawdziwym telefonie: liczba kliknięć w przyjęciu/wydaniu/przesunięciu/inwentaryzacji, wielkość przycisków (rękawice), czytelność w hali, zachowanie przy słabym zasięgu.
+3. Desktop: spójność nawigacji, tabel, komunikatów błędów i pustych stanów na wszystkich ekranach.
+4. Lista uwag użytkownika z realnego używania (import, odpowiedniki, pozostałe ekrany) — główne źródło zadań etapu.
+
 Poza MVP: automatyczne zamówienia, PDF/PZ/WZ, resztki profili, integracja online z LiczOkno.
 
 ---
@@ -239,6 +245,12 @@ Poza MVP: automatyczne zamówienia, PDF/PZ/WZ, resztki profili, integracja onlin
 3. **Testy po starcie:** `pnpm test:db` NIE może już działać na bazie produkcyjnej. Przed startem zdecydować: lokalny Supabase (Docker) do testów DB, albo zwolnienie drugiego projektu Supabase na bazę testową.
 4. Rotacja kluczy Supabase (secret) i aktualizacja sekretu w Cloudflare.
 5. Usunięcie funkcji `purge_test_stock` (sprzątanie testów, ADR 009) migracją — na produkcji ruchów nie wolno usuwać żadną ścieżką.
+6. **Własna domena** (decyzja użytkownika 2026-10-03: nowa, osobna domena tylko dla magazynu, zarejestrowana w Seohost; aplikacja nadal na Cloudflare Workers — hosting Seohost nie jest jej potrzebny):
+   - dodanie domeny jako strefy w Cloudflare (plan Free) → zmiana serwerów DNS (nameserverów) w panelu Seohost na podane przez Cloudflare (propagacja do 24–48 h),
+   - Worker → Custom Domain (domena główna; `www` przekierowane na główną), certyfikat SSL automatycznie,
+   - Supabase Auth: Site URL / Redirect URLs na nową domenę,
+   - sprawdzenie logowania, CSRF (origin), PWA (manifest `start_url`/`scope`) i etykiet QR (kody lokalizacji są niezależne od adresu — bez przedruku),
+   - stary adres `*.workers.dev` wyłączony albo przekierowany po przełączeniu.
 
 ## Otwarte kwestie na później (nie blokują Etapu 0–3)
 - Czy PRODUKCJA może wydawać bez zlecenia każdy powód, czy z listy zamkniętej (powody jako słownik?) — rozstrzygniemy w Etapie 5.
